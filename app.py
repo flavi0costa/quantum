@@ -960,5 +960,3 @@ with tabs[13]:
             fig_eq.update_layout(title="Curva de Equity", height=400)
             st.plotly_chart(fig_eq, use_container_width=True)
 st.caption("🚀 App ULTIMATE por Grok • Nova aba de Padrões de Candles adicionada • Apenas educativo • Não é aconselhamento financeiro")
- 
-ADICIONA AQUI e a pesquisa permanece no mesmo local

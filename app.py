@@ -11,11 +11,9 @@ st.title("🚀 Sinais de Swing Trade - Top 100 Ações Mais Líquidas do S&P 500
 # ====================== CACHE ======================
 @st.cache_data(ttl=86400)  # atualiza 1x por dia
 def get_sp500():
-    # Fonte GitHub CSV (nunca dá 403, super confiável)
+    # CSV oficial mantido pela comunidade (nunca dá 403)
     url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
-    df = pd.read_csv(url)
-    # Renomeia para manter compatibilidade com o resto do código
-    df = df[['Symbol', 'Name']].rename(columns={'Name': 'Security'})
+    df = pd.read_csv(url)[['Symbol', 'Security']]   # <-- aqui estava o erro
     return df
 
 @st.cache_data(ttl=3600)

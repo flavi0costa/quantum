@@ -5,9 +5,11 @@ import yfinance as yf
 import ta
 from sklearn.ensemble import RandomForestClassifier
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 st.set_page_config(layout="wide")
-st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER")
+st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Pro Version)")
 
 # ==============================
 # FIXED S&P500 LIST
@@ -16,7 +18,7 @@ symbols = [
     "AAPL","MSFT","AMZN","TSLA","GOOGL","NVDA","META",
     "BRK-B","JPM","V","UNH","HD","PG","MA","DIS","BAC",
     "VZ","ADBE","NFLX","PYPL","KO","PEP","INTC","CSCO"
-    # acrescenta mais conforme necessário
+    # Acrescenta mais conforme necessário
 ]
 
 @st.cache_data
@@ -96,6 +98,7 @@ st.subheader("🔥 FULL S&P500 AI SCANNER")
 if st.button("Run Market Scan"):
     results = []
     progress = st.progress(0)
+
     for i, sym in enumerate(symbols):
         try:
             data = load_data(sym)
@@ -113,5 +116,22 @@ if st.button("Run Market Scan"):
         except:
             pass
         progress.progress((i+1)/len(symbols))
+
     df_results = pd.DataFrame(results)
     st.dataframe(df_results.sort_values("RSI", ascending=False))
+
+    # ==============================
+    # BACKTESTING VISUAL (SIMPLE)
+    # ==============================
+    st.subheader("📈 Backtesting Visual")
+
+    top_buy = df_results[df_results["Signal"]=="BUY"].sort_values("RSI", ascending=False).head(5)
+    fig2, ax2 = plt.subplots(figsize=(10,5))
+    for sym in top_buy["Symbol"]:
+        data = load_data(sym)
+        data = add_indicators(data)
+        ax2.plot(data.index, data["Close"], label=sym)
+    ax2.set_title("Top 5 BUY Signals - Price History")
+    ax2.set_ylabel("Price ($)")
+    ax2.legend()
+    st.pyplot(fig2)

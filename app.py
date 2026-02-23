@@ -102,8 +102,8 @@ def calculate_indicators(ticker):
     df['SenkouB'] = ((df['High'].rolling(52).max() + df['Low'].rolling(52).min()) / 2).shift(52)
     df['Chikou'] = df['Close'].shift(-26)
 
-    # === 3 NOVOS INDICADORES ===
-    # SuperTrend (10, 3)
+    # === 3 NOVOS ===
+    # SuperTrend
     multiplier = 3.0
     df['HL2'] = (df['High'] + df['Low']) / 2
     df['SuperUpper'] = df['HL2'] + multiplier * df['ATR']
@@ -123,7 +123,7 @@ def calculate_indicators(ticker):
     low14 = df['Low'].rolling(14).min()
     df['Williams_%R'] = -100 * (high14 - df['Close']) / (high14 - low14)
 
-    # MFI (Money Flow Index)
+    # MFI
     tp = (df['High'] + df['Low'] + df['Close']) / 3
     mf = tp * df['Volume']
     pos_mf = mf.where(tp > tp.shift(), 0).rolling(14).sum()
@@ -134,24 +134,19 @@ def calculate_indicators(ticker):
     return df
 
 def generate_signal(df):
-    if len(df) < 200:
-        return "Dados insuficientes", 0
+    if len(df) < 200: return "Dados insuficientes", 0
     latest = df.iloc[-1]
     prev = df.iloc[-2]
-
     score = 0
 
-    # Tendência básica
-    if pd.notna(latest['Close']) and pd.notna(latest['SMA50']) and pd.notna(latest['SMA200']):
+    if pd.notna(latest['Close']) and pd.notna(latest.get('SMA50')) and pd.notna(latest.get('SMA200')):
         if latest['Close'] > latest['SMA50'] > latest['SMA200']: score += 3
         elif latest['Close'] < latest['SMA50'] < latest['SMA200']: score -= 3
 
-    # RSI
     if pd.notna(latest.get('RSI')):
         if latest['RSI'] < 35: score += 2
         elif latest['RSI'] > 65: score -= 2
 
-    # MACD
     if pd.notna(latest.get('MACD')) and pd.notna(latest.get('Signal')):
         if latest['MACD'] > latest['Signal'] and prev['MACD'] <= prev['Signal']: score += 3
         elif latest['MACD'] < latest['Signal'] and prev['MACD'] >= prev['Signal']: score -= 3
@@ -159,7 +154,6 @@ def generate_signal(df):
     if pd.notna(latest.get('MACD_Hist')):
         score += 1 if latest['MACD_Hist'] > 0 else -1
 
-    # Stochastic + Bollinger + CCI + ADX + OBV (mantidos do anterior)
     if pd.notna(latest.get('Stoch_K')) and pd.notna(latest.get('Stoch_D')):
         if latest['Stoch_K'] > latest['Stoch_D'] and prev['Stoch_K'] <= prev['Stoch_D']:
             score += 3 if latest['Stoch_K'] < 40 else 1
@@ -183,18 +177,15 @@ def generate_signal(df):
     if pd.notna(latest.get('OBV')) and pd.notna(prev.get('OBV')):
         score += 1 if latest['OBV'] > prev['OBV'] else -1
 
-    # === NOVOS 3 INDICADORES ===
-    # SuperTrend (peso muito alto)
+    # Novos
     if pd.notna(latest.get('SuperTrend')):
         if latest['Close'] > latest['SuperTrend']: score += 4
         else: score -= 4
 
-    # Williams %R
     if pd.notna(latest.get('Williams_%R')):
         if latest['Williams_%R'] < -80: score += 3
         elif latest['Williams_%R'] > -20: score -= 3
 
-    # MFI
     if pd.notna(latest.get('MFI')):
         if latest['MFI'] < 20: score += 3
         elif latest['MFI'] > 80: score -= 3
@@ -213,7 +204,7 @@ if st.sidebar.button("🔄 Atualizar Tudo"):
 top_df, _ = get_top_liquid_stocks(100, 30)
 
 if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"):
-    with st.spinner("Calculando 12 indicadores... (35-75 seg)"):
+    with st.spinner("Calculando 12 indicadores..."):
         signals = []
         data_cache = {}
         for ticker in top_df['Symbol']:
@@ -225,7 +216,6 @@ if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"
                     bb_pos = np.nan
                     if 'BB_Lower' in latest and 'BB_Upper' in latest and pd.notna(latest['BB_Lower']):
                         bb_pos = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
-
                     signals.append({
                         'Símbolo': ticker,
                         'Empresa': top_df[top_df['Symbol']==ticker]['Security'].iloc[0],
@@ -249,19 +239,8 @@ if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"
 signals_df = st.session_state.signals_df
 
 st.subheader("📊 Top 100 + 12 Indicadores")
-st.dataframe(
-    signals_df.sort_values('Score', ascending=False),
-    column_config={
-        "Sinal": st.column_config.TextColumn("Sinal", width="medium"),
-        "Score": st.column_config.NumberColumn("Score", format="%d"),
-        "Variação %": st.column_config.NumberColumn(format="%.2f%%"),
-        "SuperTrend": st.column_config.TextColumn("SuperTrend"),
-    },
-    use_container_width=True,
-    height=700
-)
+st.dataframe(signals_df.sort_values('Score', ascending=False), use_container_width=True, height=700)
 
-# ====================== DETALHE ======================
 st.subheader("📈 Detalhe da Ação")
 selected = st.selectbox("Escolhe uma ação:", options=signals_df['Símbolo'], index=0)
 
@@ -272,34 +251,157 @@ signal_text, _ = generate_signal(df)
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Preço", f"${latest['Close']:.2f}", f"{(latest['Close']/df.iloc[-2]['Close']-1)*100:+.2f}%")
 col2.metric("Sinal", signal_text)
-col3.metric("ATR (14)", f"{latest.get('ATR',0):.2f}")
+col3.metric("ATR", f"{latest.get('ATR',0):.2f}")
 col4.metric("Stop 2×ATR", f"${latest['Close'] - 2*latest.get('ATR',0):.2f}")
 
 tabs = st.tabs(["Preço + Vol", "RSI", "MACD", "Bollinger", "Stochastic", "CCI", "ADX", "Ichimoku", "Volume Profile", "SuperTrend", "Williams %R", "MFI", "🔙 Backtesting"])
 
-# (Os tabs 0 a 8 são os mesmos do código anterior - mantidos para brevidade aqui, mas no ficheiro completo estão todos)
+with tabs[0]:
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA50'], name="SMA50", line=dict(color="orange")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA200'], name="SMA200", line=dict(color="blue")))
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(100,149,237,0.6)"), secondary_y=True)
+    fig.update_layout(title=f"{selected} - Gráfico Diário", height=650)
+    st.plotly_chart(fig, use_container_width=True)
 
-with tabs[9]:  # SuperTrend
+with tabs[1]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['RSI'], name="RSI"))
+    fig.add_hline(70, line_dash="dash", line_color="red")
+    fig.add_hline(30, line_dash="dash", line_color="green")
+    fig.update_layout(title="RSI (14)", yaxis_range=[0,100], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[2]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal"))
+    fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name="Histograma", marker_color=np.where(df['MACD_Hist']>=0,'green','red')))
+    fig.update_layout(title="MACD", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[3]:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name="Upper", line=dict(color="red",dash="dash")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Mid'], name="Mid", line=dict(color="gray")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name="Lower", line=dict(color="green",dash="dash")))
+    fig.update_layout(title="Bollinger Bands (20,2)", height=450)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[4]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_K'], name="%K"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_D'], name="%D"))
+    fig.add_hline(80, line_dash="dash", line_color="red")
+    fig.add_hline(20, line_dash="dash", line_color="green")
+    fig.update_layout(title="Stochastic (14,3,3)", yaxis_range=[0,100], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[5]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['CCI'], name="CCI"))
+    fig.add_hline(100, line_dash="dash", line_color="red")
+    fig.add_hline(-100, line_dash="dash", line_color="green")
+    fig.update_layout(title="CCI (20)", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[6]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['ADX'], name="ADX", line=dict(color="purple",width=3)))
+    fig.add_trace(go.Scatter(x=df.index, y=df['+DI'], name="+DI", line=dict(color="green")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['-DI'], name="-DI", line=dict(color="red")))
+    fig.add_hline(25, line_dash="dash", line_color="black")
+    fig.update_layout(title="ADX +DI/-DI", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[7]:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Tenkan'], name="Tenkan", line=dict(color="red")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Kijun'], name="Kijun", line=dict(color="blue")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SenkouA'], name="Senkou A", line=dict(color="green")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SenkouB'], name="Senkou B", line=dict(color="red")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Chikou'], name="Chikou", line=dict(color="gray", dash="dot")))
+    fig.update_layout(title="Ichimoku Cloud", height=550)
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[8]:
+    st.subheader("Volume Profile (últimos 252 dias)")
+    df_vp = df.tail(252).copy()
+    if len(df_vp) > 10:
+        p_min, p_max = df_vp['Low'].min(), df_vp['High'].max()
+        bins = np.linspace(p_min, p_max, 31)
+        bin_mids = (bins[:-1] + bins[1:]) / 2
+        vols = []
+        for i in range(len(bins)-1):
+            mask = (df_vp['Close'] >= bins[i]) & (df_vp['Close'] < bins[i+1])
+            vols.append(df_vp['Volume'][mask].sum())
+        fig_vp = go.Figure(go.Bar(x=vols, y=bin_mids, orientation='h', marker_color='rgba(55,83,109,0.85)'))
+        fig_vp.update_layout(title="Volume Profile", xaxis_title="Volume", yaxis_title="Preço", height=600)
+        st.plotly_chart(fig_vp, use_container_width=True)
+
+with tabs[9]:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
     fig.add_trace(go.Scatter(x=df.index, y=df['SuperTrend'], name="SuperTrend", line=dict(color="purple", width=3)))
     fig.update_layout(title="SuperTrend (10,3)", height=500)
     st.plotly_chart(fig, use_container_width=True)
 
-with tabs[10]:  # Williams %R
+with tabs[10]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['Williams_%R'], name="Williams %R"))
     fig.add_hline(-20, line_dash="dash", line_color="red")
     fig.add_hline(-80, line_dash="dash", line_color="green")
     fig.update_layout(title="Williams %R (14)", yaxis_range=[-100,0], height=350)
     st.plotly_chart(fig, use_container_width=True)
 
-with tabs[11]:  # MFI
+with tabs[11]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['MFI'], name="MFI"))
     fig.add_hline(80, line_dash="dash", line_color="red")
     fig.add_hline(20, line_dash="dash", line_color="green")
-    fig.update_layout(title="MFI (Money Flow Index 14)", yaxis_range=[0,100], height=350)
+    fig.update_layout(title="MFI (14)", yaxis_range=[0,100], height=350)
     st.plotly_chart(fig, use_container_width=True)
 
-# Tab de Backtesting (igual ao anterior - mantém o botão)
+with tabs[12]:
+    st.subheader("🔙 Backtesting Histórico")
+    if st.button("▶️ Executar Backtest Completo", type="primary"):
+        with st.spinner("A correr backtest..."):
+            # (código de backtest completo do anterior - mantém o mesmo)
+            hist_signals = []
+            for i in range(200, len(df)):
+                sub = df.iloc[:i+1]
+                sig, _ = generate_signal(sub)
+                hist_signals.append(sig)
+            bt_df = df.iloc[200:].copy()
+            bt_df['Signal'] = hist_signals
+            capital = 10000.0
+            position = 0
+            entry_price = 0.0
+            atr_entry = 0.0
+            equity = [capital]
+            trades_pnl = []
+            for i in range(len(bt_df)):
+                row = bt_df.iloc[i]
+                price = row['Close']
+                sig = row['Signal']
+                atr = row.get('ATR', 0)
+                if position == 0 and "Compra" in sig:
+                    position = 1
+                    entry_price = price
+                    atr_entry = atr
+                elif position == 1:
+                    stop = entry_price - 2 * atr_entry if atr_entry > 0 else entry_price * 0.95
+                    if price <= stop or "Venda" in sig:
+                        pnl = (price - entry_price) / entry_price
+                        trades_pnl.append(pnl)
+                        capital *= (1 + pnl)
+                        position = 0
+                equity.append(capital)
+            num_trades = len(trades_pnl)
+            winrate = len([p for p in trades_pnl if p > 0]) / num_trades * 100 if num_trades > 0 else 0
+            total_ret = (capital / 10000 - 1) * 100
+            st.success(f"Capital Final: **${capital:,.2f}** ({total_ret:+.1f}%) | Trades: **{num_trades}** | Win Rate: **{winrate:.1f}%**")
+            fig_eq = go.Figure(go.Scatter(x=bt_df.index, y=equity[1:], name="Equity"))
+            fig_eq.update_layout(title="Curva de Equity", height=400)
+            st.plotly_chart(fig_eq, use_container_width=True)
 
-st.caption("🚀 App ULTIMATE por Grok • 12 Indicadores + SuperTrend como filtro principal • Apenas educativo")
+st.caption("🚀 App ULTIMATE por Grok • 12 Indicadores • Apenas educativo")

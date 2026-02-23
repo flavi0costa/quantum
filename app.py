@@ -31,12 +31,11 @@ def get_top_liquid_stocks(n=100, days=30):
         })
     return top_df, top_tickers
 
-# ====================== INDICADORES ======================
+# ====================== INDICADORES (igual ao anterior) ======================
 def calculate_indicators(ticker):
     yf_ticker = ticker.replace('.', '-')
     df = yf.download(yf_ticker, period="1y", progress=False, auto_adjust=True)
-    if df.empty or len(df) < 200:
-        return None
+    if df.empty or len(df) < 200: return None
 
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
@@ -44,39 +43,33 @@ def calculate_indicators(ticker):
     df['SMA50'] = df['Close'].rolling(50).mean()
     df['SMA200'] = df['Close'].rolling(200).mean()
 
-    # MACD
     df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
     df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = df['EMA12'] - df['EMA26']
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['Signal']
 
-    # RSI
     delta = df['Close'].diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = -delta.where(delta < 0, 0).rolling(14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    # Bollinger Bands
     df['BB_Mid'] = df['Close'].rolling(20).mean()
     df['BB_Std'] = df['Close'].rolling(20).std(ddof=0)
     df['BB_Upper'] = df['BB_Mid'] + 2 * df['BB_Std']
     df['BB_Lower'] = df['BB_Mid'] - 2 * df['BB_Std']
 
-    # Stochastic
     low14 = df['Low'].rolling(14).min()
     high14 = df['High'].rolling(14).max()
     df['Stoch_K'] = 100 * ((df['Close'] - low14) / (high14 - low14))
     df['Stoch_D'] = df['Stoch_K'].rolling(3).mean()
 
-    # CCI
     tp = (df['High'] + df['Low'] + df['Close']) / 3
     tp_sma = tp.rolling(20).mean()
     tp_mad = tp.rolling(20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
     df['CCI'] = (tp - tp_sma) / (0.015 * tp_mad)
 
-    # ADX + ATR
     df['TR'] = pd.concat([df['High']-df['Low'], abs(df['High']-df['Close'].shift()), abs(df['Low']-df['Close'].shift())], axis=1).max(axis=1)
     df['ATR'] = df['TR'].rolling(14).mean()
     alpha = 1/14
@@ -92,17 +85,14 @@ def calculate_indicators(ticker):
     dx = 100 * abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])
     df['ADX'] = dx.ewm(alpha=alpha, adjust=False).mean()
 
-    # OBV
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
 
-    # Ichimoku
     df['Tenkan'] = (df['High'].rolling(9).max() + df['Low'].rolling(9).min()) / 2
     df['Kijun'] = (df['High'].rolling(26).max() + df['Low'].rolling(26).min()) / 2
     df['SenkouA'] = ((df['Tenkan'] + df['Kijun']) / 2).shift(26)
     df['SenkouB'] = ((df['High'].rolling(52).max() + df['Low'].rolling(52).min()) / 2).shift(52)
     df['Chikou'] = df['Close'].shift(-26)
 
-    # === 3 NOVOS ===
     # SuperTrend
     multiplier = 3.0
     df['HL2'] = (df['High'] + df['Low']) / 2
@@ -177,7 +167,6 @@ def generate_signal(df):
     if pd.notna(latest.get('OBV')) and pd.notna(prev.get('OBV')):
         score += 1 if latest['OBV'] > prev['OBV'] else -1
 
-    # Novos
     if pd.notna(latest.get('SuperTrend')):
         if latest['Close'] > latest['SuperTrend']: score += 4
         else: score -= 4
@@ -256,6 +245,7 @@ col4.metric("Stop 2×ATR", f"${latest['Close'] - 2*latest.get('ATR',0):.2f}")
 
 tabs = st.tabs(["Preço + Vol", "RSI", "MACD", "Bollinger", "Stochastic", "CCI", "ADX", "Ichimoku", "Volume Profile", "SuperTrend", "Williams %R", "MFI", "🔙 Backtesting"])
 
+# ==================== ABAS COM EXPLICAÇÕES ====================
 with tabs[0]:
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
@@ -264,6 +254,13 @@ with tabs[0]:
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(100,149,237,0.6)"), secondary_y=True)
     fig.update_layout(title=f"{selected} - Gráfico Diário", height=650)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Preço + SMA para Swing Trade"):
+        st.markdown("""
+        **Compra forte**: Preço > SMA50 > SMA200 (tendência de alta clara)  
+        **Compra**: Preço cruza para cima da SMA50  
+        **Venda**: Preço < SMA50 < SMA200  
+        **Dica**: Usa sempre com SuperTrend e ADX para confirmar força da tendência
+        """)
 
 with tabs[1]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['RSI'], name="RSI"))
@@ -271,6 +268,13 @@ with tabs[1]:
     fig.add_hline(30, line_dash="dash", line_color="green")
     fig.update_layout(title="RSI (14)", yaxis_range=[0,100], height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar RSI para Swing Trade"):
+        st.markdown("""
+        **Compra**: RSI < 35 (sobrevendido)  
+        **Compra extra forte**: RSI < 30 + cruzamento para cima  
+        **Venda**: RSI > 65 (sobrecomprado)  
+        **Dica**: Espera RSI voltar acima de 50 após divergência para confirmar entrada
+        """)
 
 with tabs[2]:
     fig = go.Figure()
@@ -279,6 +283,12 @@ with tabs[2]:
     fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name="Histograma", marker_color=np.where(df['MACD_Hist']>=0,'green','red')))
     fig.update_layout(title="MACD", height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar MACD para Swing Trade"):
+        st.markdown("""
+        **Compra**: Linha MACD cruza para cima da linha Signal + histograma positivo  
+        **Venda**: Linha MACD cruza para baixo da linha Signal  
+        **Dica**: Quanto maior o histograma, mais forte o movimento
+        """)
 
 with tabs[3]:
     fig = go.Figure()
@@ -288,6 +298,12 @@ with tabs[3]:
     fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name="Lower", line=dict(color="green",dash="dash")))
     fig.update_layout(title="Bollinger Bands (20,2)", height=450)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Bollinger Bands para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço toca banda inferior + tendência de alta (acima SMA50)  
+        **Venda**: Preço toca banda superior + tendência de baixa  
+        **Squeeze**: Bandas muito estreitas → espera explosão de volatilidade
+        """)
 
 with tabs[4]:
     fig = go.Figure()
@@ -297,6 +313,12 @@ with tabs[4]:
     fig.add_hline(20, line_dash="dash", line_color="green")
     fig.update_layout(title="Stochastic (14,3,3)", yaxis_range=[0,100], height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Stochastic para Swing Trade"):
+        st.markdown("""
+        **Compra**: %K cruza para cima de %D abaixo de 40  
+        **Venda**: %K cruza para baixo de %D acima de 60  
+        **Dica**: Muito bom em mercados laterais
+        """)
 
 with tabs[5]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['CCI'], name="CCI"))
@@ -304,6 +326,12 @@ with tabs[5]:
     fig.add_hline(-100, line_dash="dash", line_color="green")
     fig.update_layout(title="CCI (20)", height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar CCI para Swing Trade"):
+        st.markdown("""
+        **Compra**: CCI < -100 (sobrevendido)  
+        **Venda**: CCI > 100 (sobrecomprado)  
+        **Dica**: Divergências com preço são sinais muito fortes
+        """)
 
 with tabs[6]:
     fig = go.Figure()
@@ -313,6 +341,13 @@ with tabs[6]:
     fig.add_hline(25, line_dash="dash", line_color="black")
     fig.update_layout(title="ADX +DI/-DI", height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar ADX para Swing Trade"):
+        st.markdown("""
+        **Tendência forte**: ADX > 25  
+        **Compra**: ADX > 25 e +DI > -DI  
+        **Venda**: ADX > 25 e -DI > +DI  
+        **Dica**: Se ADX < 20 evita operar (mercado sem tendência)
+        """)
 
 with tabs[7]:
     fig = go.Figure()
@@ -324,6 +359,12 @@ with tabs[7]:
     fig.add_trace(go.Scatter(x=df.index, y=df['Chikou'], name="Chikou", line=dict(color="gray", dash="dot")))
     fig.update_layout(title="Ichimoku Cloud", height=550)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Ichimoku para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço acima da nuvem + Tenkan > Kijun  
+        **Venda**: Preço abaixo da nuvem  
+        **Dica**: Nuvem grossa = suporte/resistência forte
+        """)
 
 with tabs[8]:
     st.subheader("Volume Profile (últimos 252 dias)")
@@ -339,6 +380,12 @@ with tabs[8]:
         fig_vp = go.Figure(go.Bar(x=vols, y=bin_mids, orientation='h', marker_color='rgba(55,83,109,0.85)'))
         fig_vp.update_layout(title="Volume Profile", xaxis_title="Volume", yaxis_title="Preço", height=600)
         st.plotly_chart(fig_vp, use_container_width=True)
+    with st.expander("📋 Como analisar Volume Profile para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço perto de zona de alto volume (suporte forte)  
+        **Venda**: Preço perto de zona de alto volume (resistência)  
+        **Dica**: O POC (ponto de maior volume) é excelente nível de stop
+        """)
 
 with tabs[9]:
     fig = go.Figure()
@@ -346,6 +393,12 @@ with tabs[9]:
     fig.add_trace(go.Scatter(x=df.index, y=df['SuperTrend'], name="SuperTrend", line=dict(color="purple", width=3)))
     fig.update_layout(title="SuperTrend (10,3)", height=500)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar SuperTrend para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço acima da linha SuperTrend (trailing stop)  
+        **Venda**: Preço cruza para baixo da linha SuperTrend  
+        **Dica**: Melhor indicador de tendência atual (usa como stop dinâmico!)
+        """)
 
 with tabs[10]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['Williams_%R'], name="Williams %R"))
@@ -353,6 +406,12 @@ with tabs[10]:
     fig.add_hline(-80, line_dash="dash", line_color="green")
     fig.update_layout(title="Williams %R (14)", yaxis_range=[-100,0], height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Williams %R para Swing Trade"):
+        st.markdown("""
+        **Compra**: Williams %R < -80 (extremamente sobrevendido)  
+        **Venda**: Williams %R > -20 (extremamente sobrecomprado)  
+        **Dica**: Reage mais rápido que o RSI em reversões
+        """)
 
 with tabs[11]:
     fig = go.Figure(go.Scatter(x=df.index, y=df['MFI'], name="MFI"))
@@ -360,12 +419,17 @@ with tabs[11]:
     fig.add_hline(20, line_dash="dash", line_color="green")
     fig.update_layout(title="MFI (14)", yaxis_range=[0,100], height=350)
     st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar MFI para Swing Trade"):
+        st.markdown("""
+        **Compra**: MFI < 20 (dinheiro a sair + preço a cair = divergência)  
+        **Venda**: MFI > 80  
+        **Dica**: Detecta divergências que o RSI não vê (fluxo de dinheiro)
+        """)
 
 with tabs[12]:
     st.subheader("🔙 Backtesting Histórico")
     if st.button("▶️ Executar Backtest Completo", type="primary"):
         with st.spinner("A correr backtest..."):
-            # (código de backtest completo do anterior - mantém o mesmo)
             hist_signals = []
             for i in range(200, len(df)):
                 sub = df.iloc[:i+1]
@@ -404,4 +468,4 @@ with tabs[12]:
             fig_eq.update_layout(title="Curva de Equity", height=400)
             st.plotly_chart(fig_eq, use_container_width=True)
 
-st.caption("🚀 App ULTIMATE por Grok • 12 Indicadores • Apenas educativo")
+st.caption("🚀 App ULTIMATE por Grok • 12 Indicadores com guias práticos • Apenas educativo • Não é aconselhamento financeiro")

@@ -1,134 +1,127 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import yfinance as yf
+import ta
+from sklearn.ensemble import RandomForestClassifier
+import plotly.graph_objects as go
 
-# ---------------------------
-# CONFIGURAÇÃO DA PÁGINA
-# ---------------------------
-st.set_page_config(
-    page_title="Dashboard Pro Streamlit",
-    page_icon="📊",
-    layout="wide"
-)
+st.set_page_config(layout="wide")
 
-# ---------------------------
-# TÍTULO
-# ---------------------------
-st.title("📊 Dashboard Inteligente em Streamlit")
-st.write("App completo com análise automática de dados.")
+st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER")
 
-# ---------------------------
-# SIDEBAR
-# ---------------------------
-st.sidebar.header("⚙️ Configurações")
+# ==============================
+# LOAD S&P500 LIST
+# ==============================
+@st.cache_data
+def load_sp500():
+    table = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+    return table[0]["Symbol"].tolist()
 
-file = st.sidebar.file_uploader("Carregar ficheiro CSV", type=["csv"])
+symbols = load_sp500()
 
-use_demo = st.sidebar.checkbox("Usar dados de exemplo", value=True)
+# ==============================
+# DOWNLOAD DATA
+# ==============================
+@st.cache_data
+def load_data(symbol):
+    df = yf.download(symbol, period="1y", interval="1d")
+    df = df.dropna()
+    return df
 
-# ---------------------------
-# DADOS
-# ---------------------------
-if file:
-    df = pd.read_csv(file)
+# ==============================
+# FEATURE ENGINEERING
+# ==============================
+def add_indicators(df):
+    df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
+    df["MACD"] = ta.trend.MACD(df["Close"]).macd()
+    df["EMA"] = ta.trend.EMAIndicator(df["Close"], window=20).ema_indicator()
+    df = df.dropna()
+    return df
 
-elif use_demo:
-    np.random.seed(42)
-    df = pd.DataFrame({
-        "Vendas": np.random.randint(100, 1000, 100),
-        "Lucro": np.random.randint(50, 500, 100),
-        "Clientes": np.random.randint(10, 200, 100),
-        "Região": np.random.choice(["Norte", "Centro", "Sul"], 100)
-    })
+# ==============================
+# MACHINE LEARNING MODEL
+# ==============================
+def train_model(df):
+    df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
 
+    X = df[["RSI", "MACD", "EMA"]]
+    y = df["Target"]
+
+    model = RandomForestClassifier(n_estimators=200)
+    model.fit(X, y)
+    return model
+
+# ==============================
+# SIGNAL GENERATION
+# ==============================
+def get_signal(model, df):
+    latest = df[["RSI", "MACD", "EMA"]].iloc[-1:]
+    pred = model.predict(latest)[0]
+    return "BUY" if pred == 1 else "SELL"
+
+# ==============================
+# UI CONTROLS
+# ==============================
+selected = st.selectbox("Select Stock", symbols)
+
+df = load_data(selected)
+df = add_indicators(df)
+
+model = train_model(df)
+signal = get_signal(model, df)
+
+# ==============================
+# SHOW SIGNAL
+# ==============================
+st.subheader(f"📊 AI Signal for {selected}")
+
+if signal == "BUY":
+    st.success("🟢 BUY SIGNAL")
 else:
-    st.warning("Carrega um ficheiro ou ativa dados demo.")
-    st.stop()
+    st.error("🔴 SELL SIGNAL")
 
-# ---------------------------
-# MOSTRAR DADOS
-# ---------------------------
-st.subheader("📋 Dados")
+# ==============================
+# PRICE CHART
+# ==============================
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price"))
+fig.add_trace(go.Scatter(x=df.index, y=df["EMA"], name="EMA"))
 
-st.dataframe(df, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True)
 
-# ---------------------------
-# ESTATÍSTICAS
-# ---------------------------
-st.subheader("📈 Estatísticas")
+# ==============================
+# FULL MARKET SCANNER
+# ==============================
+st.subheader("🔥 FULL S&P500 AI SCANNER")
 
-col1, col2, col3 = st.columns(3)
+if st.button("Run Market Scan"):
+    results = []
 
-col1.metric("Linhas", df.shape[0])
-col2.metric("Colunas", df.shape[1])
-col3.metric("Valores Nulos", df.isna().sum().sum())
+    progress = st.progress(0)
 
-st.write(df.describe())
+    for i, sym in enumerate(symbols[:100]):  # limit for speed
+        try:
+            data = load_data(sym)
+            data = add_indicators(data)
 
-# ---------------------------
-# FILTROS
-# ---------------------------
-st.subheader("🎛️ Filtros")
+            if len(data) < 50:
+                continue
 
-numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
+            m = train_model(data)
+            sig = get_signal(m, data)
 
-filtered_df = df.copy()
+            results.append({
+                "Symbol": sym,
+                "Signal": sig,
+                "Price": data["Close"].iloc[-1],
+                "RSI": round(data["RSI"].iloc[-1], 2)
+            })
+        except:
+            pass
 
-# Filtro categórico
-for col in cat_cols:
-    values = st.multiselect(f"Filtrar {col}", df[col].unique(), default=df[col].unique())
-    filtered_df = filtered_df[filtered_df[col].isin(values)]
+        progress.progress((i + 1) / 100)
 
-# ---------------------------
-# GRÁFICOS
-# ---------------------------
-st.subheader("📊 Visualização")
+    results_df = pd.DataFrame(results)
 
-if len(numeric_cols) >= 2:
-
-    x = st.selectbox("Eixo X", numeric_cols)
-    y = st.selectbox("Eixo Y", numeric_cols, index=1)
-
-    chart_type = st.radio(
-        "Tipo de gráfico",
-        ["Linha", "Dispersão", "Histograma"]
-    )
-
-    fig, ax = plt.subplots()
-
-    if chart_type == "Linha":
-        ax.plot(filtered_df[x], filtered_df[y])
-
-    elif chart_type == "Dispersão":
-        sns.scatterplot(data=filtered_df, x=x, y=y, ax=ax)
-
-    else:
-        ax.hist(filtered_df[x], bins=20)
-
-    st.pyplot(fig)
-
-else:
-    st.info("Precisas de pelo menos 2 colunas numéricas.")
-
-# ---------------------------
-# DOWNLOAD
-# ---------------------------
-st.subheader("⬇️ Exportar Dados")
-
-csv = filtered_df.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "Descarregar CSV",
-    csv,
-    "dados_filtrados.csv",
-    "text/csv"
-)
-
-# ---------------------------
-# FOOTER
-# ---------------------------
-st.markdown("---")
-st.caption("Dashboard criado com Streamlit 🚀")
+    st.dataframe(results_df.sort_values("RSI", ascending=False))

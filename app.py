@@ -1,179 +1,146 @@
 import streamlit as st
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import yfinance as yf
 import ta
+import plotly.express as px
 from sklearn.ensemble import RandomForestClassifier
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
 
 st.set_page_config(layout="wide")
-st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Robust Final Version)")
 
-# ==============================
-# FIXED S&P500 LIST (corrigida)
-# ==============================
-symbols = [
-    "AAPL","MSFT","AMZN","TSLA","GOOGL","NVDA","META",
-    "BRK-B","JPM","V","UNH","HD","PG","MA","DIS","BAC",
-    "VZ","ADBE","NFLX","PYPL","KO","PEP","INTC","CSCO"
-    # Acrescenta mais conforme necessário
-]
+st.title("🧠 SUPER QUANT TERMINAL PRO")
 
-@st.cache_data
-def load_sp500():
-    return symbols
+SYMBOLS = ["AAPL","TSLA","NVDA","MSFT","AMD","META","AMZN"]
 
-symbols = load_sp500()
-
-# ==============================
-# DOWNLOAD DATA
-# ==============================
-@st.cache_data
-def load_data(symbol):
-    try:
-        df = yf.download(symbol, period="1y", interval="1d")
-        if df.empty:
-            return None
-        df = df.dropna()
-        return df
-    except:
-        return None
-
-# ==============================
-# FIX MULTIINDEX / CLEAN DATA
-# ==============================
-def fix_yfinance(df):
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    for col in ["Open","High","Low","Close","Adj Close","Volume"]:
-        if col not in df.columns:
-            df[col] = np.nan
-    df = df.dropna(subset=["Close"])
-    return df
-
-# ==============================
-# FEATURE ENGINEERING
-# ==============================
-def add_indicators(df):
+# ========================
+# AI MODEL
+# ========================
+@st.cache_resource
+def train_ai():
+    df = yf.download("AAPL", period="5y")
     df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
     df["MACD"] = ta.trend.MACD(df["Close"]).macd()
-    df["EMA"] = ta.trend.EMAIndicator(df["Close"], window=20).ema_indicator()
-    df = df.dropna()
-    return df
+    df["EMA"] = ta.trend.EMAIndicator(df["Close"], 20).ema_indicator()
+    df["ATR"] = ta.volatility.AverageTrueRange(df["High"],df["Low"],df["Close"]).average_true_range()
 
-# ==============================
-# MACHINE LEARNING MODEL
-# ==============================
-def train_model(df):
-    df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
-    df = df.dropna(subset=["RSI","MACD","EMA","Target"])
-    if len(df) < 20:
-        return None
-    X = df[["RSI","MACD","EMA"]]
+    df["Future"] = df["Close"].shift(-5)
+    df["Target"] = (df["Future"] > df["Close"]).astype(int)
+
+    df.dropna(inplace=True)
+
+    X = df[["RSI","MACD","EMA","ATR"]]
     y = df["Target"]
-    model = RandomForestClassifier(n_estimators=200)
+
+    model = RandomForestClassifier()
     model.fit(X,y)
+
     return model
 
-# ==============================
-# SIGNAL GENERATION
-# ==============================
-def get_signal(model, df):
-    latest = df[["RSI","MACD","EMA"]].iloc[-1:]
-    pred = model.predict(latest)[0]
-    return "BUY" if pred == 1 else "SELL"
+model = train_ai()
 
-# ==============================
-# USER INTERFACE
-# ==============================
-selected = st.selectbox("Select Stock", symbols)
+# ========================
+# SIDEBAR CONTROLS
+# ========================
+st.sidebar.title("⚙️ Controls")
 
-df = load_data(selected)
-if df is None:
-    st.warning(f"⚠️ Nenhum dado disponível para {selected}")
-else:
-    df = fix_yfinance(df)
-    df = add_indicators(df)
+capital = st.sidebar.number_input("Capital", value=500)
+risk = st.sidebar.slider("Risk %",1,10,2)/100
 
-    model = train_model(df)
-    if model is not None:
-        signal = get_signal(model, df)
-    else:
-        signal = "INSUFFICIENT DATA"
+scan_button = st.sidebar.button("🚀 Scan Market")
 
-    st.subheader(f"📊 AI Signal for {selected}")
-    if signal == "BUY":
-        st.success("🟢 BUY SIGNAL")
-    elif signal == "SELL":
-        st.error("🔴 SELL SIGNAL")
-    else:
-        st.warning("⚠️ Not enough data to generate signal")
+# ========================
+# FUNCTIONS
+# ========================
 
-    # ==============================
-    # PRICE CHART
-    # ==============================
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price"))
-    fig.add_trace(go.Scatter(x=df.index, y=df["EMA"], name="EMA"))
-    st.plotly_chart(fig, use_container_width=True)
+def smart_money(df):
+    last = df.iloc[-1]
+    prev_low = df["Low"].rolling(20).min().iloc[-2]
+    prev_high = df["High"].rolling(20).max().iloc[-2]
 
-# ==============================
-# FULL MARKET SCANNER
-# ==============================
-st.subheader("🔥 FULL S&P500 AI SCANNER")
+    stop_hunt = last["Low"] < prev_low and last["Close"] > prev_low
+    fake_breakout = last["High"] > prev_high and last["Close"] < prev_high
 
-if st.button("Run Market Scan"):
+    return stop_hunt or fake_breakout
+
+def explosion_signal(df):
+    atr = df["High"] - df["Low"]
+    compression = atr.iloc[-1] < atr.rolling(20).mean().iloc[-1]*0.6
+    volume = df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1]*1.5
+    return compression and volume
+
+def ai_probability(df):
+    last = df.iloc[-1]
+    features = [[
+        last["RSI"],
+        last["MACD"],
+        last["EMA"],
+        last["ATR"]
+    ]]
+    return model.predict_proba(features)[0][1]
+
+def position_size(capital, risk, stop):
+    return (capital*risk)/stop
+
+# ========================
+# MAIN SCANNER
+# ========================
+if scan_button:
+
     results = []
-    progress = st.progress(0)
-    valid_symbols = 0
 
-    for i, sym in enumerate(symbols):
-        data = load_data(sym)
-        if data is None or data.empty:
-            progress.progress((i+1)/len(symbols))
-            continue  # pula se sem dados
-        try:
-            data = fix_yfinance(data)
-            data = add_indicators(data)
-            model = train_model(data)
-            if model is None:
-                progress.progress((i+1)/len(symbols))
-                continue
-            sig = get_signal(model, data)
+    with st.spinner("Scanning market..."):
+
+        for sym in SYMBOLS:
+
+            df = yf.download(sym, period="6mo")
+
+            df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
+            df["MACD"] = ta.trend.MACD(df["Close"]).macd()
+            df["EMA"] = ta.trend.EMAIndicator(df["Close"], 20).ema_indicator()
+            df["ATR"] = ta.volatility.AverageTrueRange(df["High"],df["Low"],df["Close"]).average_true_range()
+
+            df.dropna(inplace=True)
+
+            prob = ai_probability(df)
+            smart = smart_money(df)
+            explode = explosion_signal(df)
+
+            score = prob*60
+            if smart: score+=20
+            if explode: score+=20
+
+            last_price = df["Close"].iloc[-1]
+            stop = df["ATR"].iloc[-1]*2
+
+            size = position_size(capital, risk, stop)
+
             results.append({
                 "Symbol": sym,
-                "Signal": sig,
-                "Price": round(data["Close"].iloc[-1],2),
-                "RSI": round(data["RSI"].iloc[-1],2)
+                "AI Prob": round(prob*100,1),
+                "Smart Money": smart,
+                "Pre-Explosion": explode,
+                "Score": round(score),
+                "Price": round(last_price,2),
+                "Position Size": int(size)
             })
-            valid_symbols += 1
-        except:
-            pass
-        progress.progress((i+1)/len(symbols))
 
-    if valid_symbols == 0:
-        st.warning("⚠️ Nenhum ticker válido encontrado. Verifique os símbolos ou o período de dados.")
-    else:
-        df_results = pd.DataFrame(results)
-        st.dataframe(df_results.sort_values("RSI", ascending=False))
+    df_results = pd.DataFrame(results).sort_values("Score", ascending=False)
 
-        # ==============================
-        # BACKTESTING VISUAL (SIMPLE)
-        # ==============================
-        st.subheader("📈 Backtesting Visual")
-        top_buy = df_results[df_results["Signal"]=="BUY"].sort_values("RSI", ascending=False).head(5)
-        if len(top_buy) > 0:
-            fig2, ax2 = plt.subplots(figsize=(10,5))
-            for sym in top_buy["Symbol"]:
-                data = load_data(sym)
-                data = fix_yfinance(data)
-                data = add_indicators(data)
-                ax2.plot(data.index, data["Close"], label=sym)
-            ax2.set_title("Top 5 BUY Signals - Price History")
-            ax2.set_ylabel("Price ($)")
-            ax2.legend()
-            st.pyplot(fig2)
-        else:
-            st.info("Nenhuma ação com sinal BUY disponível para backtesting")
+    st.subheader("🏆 Opportunity Ranking")
+    st.dataframe(df_results, use_container_width=True)
+
+    # ========================
+    # BEST TRADE VIEW
+    # ========================
+    best = df_results.iloc[0]["Symbol"]
+    st.subheader(f"📈 Best Opportunity: {best}")
+
+    df = yf.download(best, period="6mo")
+
+    fig = px.line(df, y="Close", title=best)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.success("Scan completed!")
+
+else:
+    st.info("Press 'Scan Market' to start analysis.")

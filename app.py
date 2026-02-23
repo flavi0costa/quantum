@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 st.set_page_config(layout="wide")
-st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Pro Version)")
+st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Final Version)")
 
 # ==============================
 # FIXED S&P500 LIST
@@ -18,7 +18,7 @@ symbols = [
     "AAPL","MSFT","AMZN","TSLA","GOOGL","NVDA","META",
     "BRK-B","JPM","V","UNH","HD","PG","MA","DIS","BAC",
     "VZ","ADBE","NFLX","PYPL","KO","PEP","INTC","CSCO"
-    # Acrescenta mais conforme necessário
+    # acrescenta mais conforme necessário
 ]
 
 @st.cache_data
@@ -34,6 +34,19 @@ symbols = load_sp500()
 def load_data(symbol):
     df = yf.download(symbol, period="1y", interval="1d")
     df = df.dropna()
+    return df
+
+# ==============================
+# FIX MULTIINDEX / CLEAN DATA
+# ==============================
+def fix_yfinance(df):
+    df = df.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    for col in ["Open","High","Low","Close","Adj Close","Volume"]:
+        if col not in df.columns:
+            df[col] = np.nan
+    df = df.dropna(subset=["Close"])
     return df
 
 # ==============================
@@ -71,6 +84,7 @@ def get_signal(model, df):
 selected = st.selectbox("Select Stock", symbols)
 
 df = load_data(selected)
+df = fix_yfinance(df)
 df = add_indicators(df)
 
 model = train_model(df)
@@ -102,6 +116,7 @@ if st.button("Run Market Scan"):
     for i, sym in enumerate(symbols):
         try:
             data = load_data(sym)
+            data = fix_yfinance(data)
             data = add_indicators(data)
             if len(data) < 50:
                 continue
@@ -129,6 +144,7 @@ if st.button("Run Market Scan"):
     fig2, ax2 = plt.subplots(figsize=(10,5))
     for sym in top_buy["Symbol"]:
         data = load_data(sym)
+        data = fix_yfinance(data)
         data = add_indicators(data)
         ax2.plot(data.index, data["Close"], label=sym)
     ax2.set_title("Top 5 BUY Signals - Price History")

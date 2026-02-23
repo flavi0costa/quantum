@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Swing Trade ULTIMATE 2026", layout="wide")
-st.title("🚀 Swing Trade ULTIMATE - Top 100 S&P 500 (12 Indicadores + Backtest + Padrões de Candles)")
+st.title("🚀 Swing Trade ULTIMATE - Top 100 S&P 500 (12 Indicadores + Backtest)")
 
 # ====================== CACHE ======================
 @st.cache_data(ttl=86400)
@@ -185,7 +185,7 @@ def generate_signal(df):
     if score <= -9:  return "🔴 Venda", score
     return "⚪ Neutro", score
 
-# ====================== PADRÕES DE CANDLES ======================
+# ====================== NOVA FUNÇÃO - PADRÕES DE CANDLES ======================
 def detect_candlestick_pattern(df):
     if len(df) < 5:
         return "Dados insuficientes", "Não é possível analisar padrões."
@@ -193,28 +193,32 @@ def detect_candlestick_pattern(df):
     last = df.iloc[-1]
     prev1 = df.iloc[-2]
     prev2 = df.iloc[-3]
-    prev3 = df.iloc[-4]
 
     body = abs(last['Close'] - last['Open'])
     upper_shadow = last['High'] - max(last['Close'], last['Open'])
     lower_shadow = min(last['Close'], last['Open']) - last['Low']
 
-    if (prev1['Close'] < prev1['Open'] and last['Close'] > last['Open'] and last['Open'] < prev1['Close'] and last['Close'] > prev1['Open']):
-        return "🟢 Bullish Engulfing", "Reversão bullish forte. Excelente para entrada longa em swing trade."
+    # Bullish Engulfing
+    if prev1['Close'] < prev1['Open'] and last['Close'] > last['Open'] and last['Open'] < prev1['Close'] and last['Close'] > prev1['Open']:
+        return "🟢 Bullish Engulfing", "Padrão de reversão bullish forte. Excelente sinal de compra em swing trade quando aparece no fim de uma descida."
 
-    if (prev1['Close'] > prev1['Open'] and last['Close'] < last['Open'] and last['Open'] > prev1['Close'] and last['Close'] < prev1['Open']):
-        return "🔴 Bearish Engulfing", "Reversão bearish forte. Bom sinal de venda."
+    # Bearish Engulfing
+    if prev1['Close'] > prev1['Open'] and last['Close'] < last['Open'] and last['Open'] > prev1['Close'] and last['Close'] < prev1['Open']:
+        return "🔴 Bearish Engulfing", "Padrão de reversão bearish forte. Bom sinal de venda."
 
+    # Hammer
     if lower_shadow > 2 * body and upper_shadow < body * 0.3 and last['Close'] > last['Open']:
         return "🟢 Hammer", "Fundo de tendência de baixa. Bom sinal de compra."
 
+    # Shooting Star
     if upper_shadow > 2 * body and lower_shadow < body * 0.3 and last['Close'] < last['Open']:
         return "🔴 Shooting Star", "Topo de tendência de alta. Bom sinal de venda."
 
+    # Doji
     if body < (last['High'] - last['Low']) * 0.1:
-        return "⚪ Doji", "Indecisão. Espera confirmação no próximo candle."
+        return "⚪ Doji", "Indecisão no mercado. Espera confirmação no próximo candle."
 
-    return "Nenhum padrão claro", "Sem padrão forte nos últimos candles. Continua a seguir os indicadores principais."
+    return "Nenhum padrão claro", "Sem padrão forte nos últimos candles. Continua a seguir os outros indicadores."
 
 # ====================== INTERFACE ======================
 if st.sidebar.button("🔄 Atualizar Tudo"):
@@ -233,6 +237,9 @@ if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"
                 if df is not None:
                     signal_text, score = generate_signal(df)
                     latest = df.iloc[-1]
+                    bb_pos = np.nan
+                    if 'BB_Lower' in latest and 'BB_Upper' in latest and pd.notna(latest['BB_Lower']):
+                        bb_pos = (latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])
                     signals.append({
                         'Símbolo': ticker,
                         'Empresa': top_df[top_df['Symbol']==ticker]['Security'].iloc[0],
@@ -283,11 +290,179 @@ with tabs[0]:
     fig.update_layout(title=f"{selected} - Gráfico Diário", height=650)
     st.plotly_chart(fig, use_container_width=True)
     with st.expander("📋 Como analisar Preço + SMA para Swing Trade"):
-        st.markdown("**Compra forte**: Preço > SMA50 > SMA200\n**Compra**: Preço cruza para cima da SMA50")
+        st.markdown("""
+        **Compra forte**: Preço > SMA50 > SMA200 (tendência de alta clara)  
+        **Compra**: Preço cruza para cima da SMA50  
+        **Venda**: Preço < SMA50 < SMA200  
+        **Dica**: Usa sempre com SuperTrend e ADX para confirmar força da tendência
+        """)
 
-# (as abas 1 a 11 são iguais às que tinhas antes - RSI, MACD, etc.)
+with tabs[1]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['RSI'], name="RSI"))
+    fig.add_hline(70, line_dash="dash", line_color="red")
+    fig.add_hline(30, line_dash="dash", line_color="green")
+    fig.update_layout(title="RSI (14)", yaxis_range=[0,100], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar RSI para Swing Trade"):
+        st.markdown("""
+        **Compra**: RSI < 35 (sobrevendido)  
+        **Compra extra forte**: RSI < 30 + cruzamento para cima  
+        **Venda**: RSI > 65 (sobrecomprado)  
+        **Dica**: Espera RSI voltar acima de 50 após divergência para confirmar entrada
+        """)
 
-with tabs[12]:  # Nova aba - Padrões de Candles
+with tabs[2]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal"))
+    fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name="Histograma", marker_color=np.where(df['MACD_Hist']>=0,'green','red')))
+    fig.update_layout(title="MACD", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar MACD para Swing Trade"):
+        st.markdown("""
+        **Compra**: Linha MACD cruza para cima da linha Signal + histograma positivo  
+        **Venda**: Linha MACD cruza para baixo da linha Signal  
+        **Dica**: Quanto maior o histograma, mais forte o movimento
+        """)
+
+with tabs[3]:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name="Upper", line=dict(color="red",dash="dash")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Mid'], name="Mid", line=dict(color="gray")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name="Lower", line=dict(color="green",dash="dash")))
+    fig.update_layout(title="Bollinger Bands (20,2)", height=450)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Bollinger Bands para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço toca banda inferior + tendência de alta (acima SMA50)  
+        **Venda**: Preço toca banda superior + tendência de baixa  
+        **Squeeze**: Bandas muito estreitas → espera explosão de volatilidade
+        """)
+
+with tabs[4]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_K'], name="%K"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_D'], name="%D"))
+    fig.add_hline(80, line_dash="dash", line_color="red")
+    fig.add_hline(20, line_dash="dash", line_color="green")
+    fig.update_layout(title="Stochastic (14,3,3)", yaxis_range=[0,100], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Stochastic para Swing Trade"):
+        st.markdown("""
+        **Compra**: %K cruza para cima de %D abaixo de 40  
+        **Venda**: %K cruza para baixo de %D acima de 60  
+        **Dica**: Muito bom em mercados laterais
+        """)
+
+with tabs[5]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['CCI'], name="CCI"))
+    fig.add_hline(100, line_dash="dash", line_color="red")
+    fig.add_hline(-100, line_dash="dash", line_color="green")
+    fig.update_layout(title="CCI (20)", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar CCI para Swing Trade"):
+        st.markdown("""
+        **Compra**: CCI < -100 (sobrevendido)  
+        **Venda**: CCI > 100 (sobrecomprado)  
+        **Dica**: Divergências com preço são sinais muito fortes
+        """)
+
+with tabs[6]:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df['ADX'], name="ADX", line=dict(color="purple",width=3)))
+    fig.add_trace(go.Scatter(x=df.index, y=df['+DI'], name="+DI", line=dict(color="green")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['-DI'], name="-DI", line=dict(color="red")))
+    fig.add_hline(25, line_dash="dash", line_color="black")
+    fig.update_layout(title="ADX +DI/-DI", height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar ADX para Swing Trade"):
+        st.markdown("""
+        **Tendência forte**: ADX > 25  
+        **Compra**: ADX > 25 e +DI > -DI  
+        **Venda**: ADX > 25 e -DI > +DI  
+        **Dica**: Se ADX < 20 evita operar (mercado sem tendência)
+        """)
+
+with tabs[7]:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Tenkan'], name="Tenkan", line=dict(color="red")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Kijun'], name="Kijun", line=dict(color="blue")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SenkouA'], name="Senkou A", line=dict(color="green")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SenkouB'], name="Senkou B", line=dict(color="red")))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Chikou'], name="Chikou", line=dict(color="gray", dash="dot")))
+    fig.update_layout(title="Ichimoku Cloud", height=550)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Ichimoku para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço acima da nuvem + Tenkan > Kijun  
+        **Venda**: Preço abaixo da nuvem  
+        **Dica**: Nuvem grossa = suporte/resistência forte
+        """)
+
+with tabs[8]:
+    st.subheader("Volume Profile (últimos 252 dias)")
+    df_vp = df.tail(252).copy()
+    if len(df_vp) > 10:
+        p_min, p_max = df_vp['Low'].min(), df_vp['High'].max()
+        bins = np.linspace(p_min, p_max, 31)
+        bin_mids = (bins[:-1] + bins[1:]) / 2
+        vols = []
+        for i in range(len(bins)-1):
+            mask = (df_vp['Close'] >= bins[i]) & (df_vp['Close'] < bins[i+1])
+            vols.append(df_vp['Volume'][mask].sum())
+        fig_vp = go.Figure(go.Bar(x=vols, y=bin_mids, orientation='h', marker_color='rgba(55,83,109,0.85)'))
+        fig_vp.update_layout(title="Volume Profile", xaxis_title="Volume", yaxis_title="Preço", height=600)
+        st.plotly_chart(fig_vp, use_container_width=True)
+    with st.expander("📋 Como analisar Volume Profile para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço perto de zona de alto volume (suporte forte)  
+        **Venda**: Preço perto de zona de alto volume (resistência)  
+        **Dica**: O POC (ponto de maior volume) é excelente nível de stop
+        """)
+
+with tabs[9]:
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SuperTrend'], name="SuperTrend", line=dict(color="purple", width=3)))
+    fig.update_layout(title="SuperTrend (10,3)", height=500)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar SuperTrend para Swing Trade"):
+        st.markdown("""
+        **Compra**: Preço acima da linha SuperTrend (trailing stop)  
+        **Venda**: Preço cruza para baixo da linha SuperTrend  
+        **Dica**: Melhor indicador de tendência atual (usa como stop dinâmico!)
+        """)
+
+with tabs[10]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['Williams_%R'], name="Williams %R"))
+    fig.add_hline(-20, line_dash="dash", line_color="red")
+    fig.add_hline(-80, line_dash="dash", line_color="green")
+    fig.update_layout(title="Williams %R (14)", yaxis_range=[-100,0], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar Williams %R para Swing Trade"):
+        st.markdown("""
+        **Compra**: Williams %R < -80 (extremamente sobrevendido)  
+        **Venda**: Williams %R > -20 (extremamente sobrecomprado)  
+        **Dica**: Reage mais rápido que o RSI em reversões
+        """)
+
+with tabs[11]:
+    fig = go.Figure(go.Scatter(x=df.index, y=df['MFI'], name="MFI"))
+    fig.add_hline(80, line_dash="dash", line_color="red")
+    fig.add_hline(20, line_dash="dash", line_color="green")
+    fig.update_layout(title="MFI (14)", yaxis_range=[0,100], height=350)
+    st.plotly_chart(fig, use_container_width=True)
+    with st.expander("📋 Como analisar MFI para Swing Trade"):
+        st.markdown("""
+        **Compra**: MFI < 20 (dinheiro a sair + preço a cair = divergência)  
+        **Venda**: MFI > 80  
+        **Dica**: Detecta divergências que o RSI não vê (fluxo de dinheiro)
+        """)
+
+# ====================== NOVA ABA: PADRÕES DE CANDLES ======================
+with tabs[12]:
     pattern_name, pattern_desc = detect_candlestick_pattern(df)
     st.subheader("🕯️ Padrão de Candlestick Detectado")
     st.metric("Padrão Atual", pattern_name)
@@ -300,16 +475,16 @@ with tabs[12]:  # Nova aba - Padrões de Candles
     with st.expander("📋 Como usar padrões de candlestick em Swing Trade"):
         st.markdown("""
         **Regras gerais**:
-        - Padrões bullish (Hammer, Bullish Engulfing, Morning Star) são mais fortes no fim de uma descida.
-        - Padrões bearish são mais fortes no fim de uma subida.
+        - Padrões bullish (Hammer, Bullish Engulfing, Morning Star) são mais fortes no fim de uma descida e com suporte (SMA50 ou banda inferior).
+        - Padrões bearish são mais fortes no fim de uma subida e com resistência.
         - Sempre confirma com os outros indicadores (SuperTrend, RSI, Volume).
+        - O padrão sozinho não é suficiente — precisa de confluência.
         """)
 
-with tabs[13]:  # Backtesting
+with tabs[13]:
     st.subheader("🔙 Backtesting Histórico")
     if st.button("▶️ Executar Backtest Completo", type="primary"):
         with st.spinner("A correr backtest..."):
-            # teu código de backtest original
             hist_signals = []
             for i in range(200, len(df)):
                 sub = df.iloc[:i+1]
@@ -348,4 +523,4 @@ with tabs[13]:  # Backtesting
             fig_eq.update_layout(title="Curva de Equity", height=400)
             st.plotly_chart(fig_eq, use_container_width=True)
 
-st.caption("🚀 App ULTIMATE por Grok • Nova aba de Padrões de Candles adicionada • Apenas educativo")
+st.caption("🚀 App ULTIMATE por Grok • Nova aba de Padrões de Candles adicionada • Apenas educativo • Não é aconselhamento financeiro")

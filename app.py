@@ -9,11 +9,10 @@ st.set_page_config(page_title="Swing Trade S&P500", layout="wide")
 st.title("🚀 Sinais de Swing Trade - Top 100 Ações Mais Líquidas do S&P 500")
 
 # ====================== CACHE ======================
-@st.cache_data(ttl=86400)  # atualiza 1x por dia
+@st.cache_data(ttl=86400)
 def get_sp500():
-    # CSV oficial mantido pela comunidade (nunca dá 403)
     url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
-    df = pd.read_csv(url)[['Symbol', 'Security']]   # <-- aqui estava o erro
+    df = pd.read_csv(url)[['Symbol', 'Security']]
     return df
 
 @st.cache_data(ttl=3600)
@@ -37,7 +36,10 @@ def get_top_liquid_stocks(n=100, days=30):
 
 # ====================== INDICADORES ======================
 def calculate_indicators(ticker):
-    df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+    # Corrige tickers com ponto (BRK.B → BRK-B, BF.B → BF-B, etc.)
+    yf_ticker = ticker.replace('.', '-')
+    df = yf.download(yf_ticker, period="1y", progress=False, auto_adjust=True)
+    
     if df.empty or len(df) < 200:
         return None
     
@@ -64,35 +66,43 @@ def generate_signal(df):
     if len(df) < 200:
         return "Dados insuficientes", 0
     
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
-    
-    price = latest['Close']
-    sma50 = latest['SMA50']
-    sma200 = latest['SMA200']
-    rsi = latest['RSI']
-    macd = latest['MACD']
-    signal_line = latest['Signal']
-    hist = latest['MACD_Hist']
+    # Usamos .iloc para garantir scalar puro
+    price      = df['Close'].iloc[-1]
+    sma50      = df['SMA50'].iloc[-1]
+    sma200     = df['SMA200'].iloc[-1]
+    rsi        = df['RSI'].iloc[-1]
+    macd       = df['MACD'].iloc[-1]
+    signal_line = df['Signal'].iloc[-1]
+    hist       = df['MACD_Hist'].iloc[-1]
+    prev_macd  = df['MACD'].iloc[-2]
+    prev_signal = df['Signal'].iloc[-2]
     
     score = 0
     
-    if price > sma50 > sma200:
-        score += 3
-    elif price < sma50 < sma200:
-        score -= 3
+    # Tendência (seguro contra NaN)
+    if pd.notna(price) and pd.notna(sma50) and pd.notna(sma200):
+        if price > sma50 and sma50 > sma200:
+            score += 3
+        elif price < sma50 and sma50 < sma200:
+            score -= 3
     
-    if rsi < 35:
-        score += 2
-    elif rsi > 65:
-        score -= 2
+    # RSI
+    if pd.notna(rsi):
+        if rsi < 35:
+            score += 2
+        elif rsi > 65:
+            score -= 2
     
-    if macd > signal_line and prev['MACD'] <= prev['Signal']:
-        score += 3
-    elif macd < signal_line and prev['MACD'] >= prev['Signal']:
-        score -= 3
+    # MACD cruzamento
+    if pd.notna(macd) and pd.notna(signal_line) and pd.notna(prev_macd) and pd.notna(prev_signal):
+        if macd > signal_line and prev_macd <= prev_signal:
+            score += 3
+        elif macd < signal_line and prev_macd >= prev_signal:
+            score -= 3
     
-    score += 1 if hist > 0 else -1
+    # Histograma
+    if pd.notna(hist):
+        score += 1 if hist > 0 else -1
     
     if score >= 6:   return "🟢 Compra Forte", score
     if score >= 3:   return "🟢 Compra", score
@@ -125,8 +135,8 @@ if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"
                     'Preço': round(latest['Close'], 2),
                     'Variação %': round((latest['Close'] / df.iloc[-2]['Close'] - 1) * 100, 2),
                     'Vol. Médio Diário': f"{int(top_df[top_df['Symbol']==ticker]['Avg_Daily_Volume'].iloc[0]):,}",
-                    'RSI': round(latest['RSI'], 1),
-                    'MACD Hist': round(latest['MACD_Hist'], 3),
+                    'RSI': round(latest['RSI'], 1) if pd.notna(latest['RSI']) else "N/A",
+                    'MACD Hist': round(latest['MACD_Hist'], 3) if pd.notna(latest['MACD_Hist']) else "N/A",
                     'Sinal': signal_text,
                     'Score': score
                 })
@@ -159,7 +169,7 @@ signal_text, _ = generate_signal(df)
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Preço Atual", f"${latest['Close']:.2f}", f"{(latest['Close']/df.iloc[-2]['Close']-1)*100:+.2f}%")
-col2.metric("RSI (14)", f"{latest['RSI']:.1f}")
+col2.metric("RSI (14)", f"{latest['RSI']:.1f}" if pd.notna(latest['RSI']) else "N/A")
 col3.metric("Sinal Swing Trade", signal_text)
 col4.metric("Volume Médio 30d", f"{int(top_df[top_df['Symbol']==selected]['Avg_Daily_Volume'].iloc[0]):,}")
 

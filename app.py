@@ -1,142 +1,134 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import ta
-import plotly.express as px
-from sklearn.ensemble import RandomForestClassifier
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-st.set_page_config(layout="wide")
-st.title("🧠 SUPER QUANT TERMINAL")
+# ---------------------------
+# CONFIGURAÇÃO DA PÁGINA
+# ---------------------------
+st.set_page_config(
+    page_title="Dashboard Pro Streamlit",
+    page_icon="📊",
+    layout="wide"
+)
 
-SYMBOLS = ["AAPL","TSLA","NVDA","MSFT","AMD","META","AMZN"]
+# ---------------------------
+# TÍTULO
+# ---------------------------
+st.title("📊 Dashboard Inteligente em Streamlit")
+st.write("App completo com análise automática de dados.")
 
-# =========================
-# FIX UNIVERSAL YFINANCE
-# =========================
-def fix_yfinance(df):
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.droplevel(1)
-
-    for col in ["Close","High","Low","Volume"]:
-        df[col] = pd.Series(df[col].values, index=df.index)
-
-    return df
-
-# =========================
-# AI TRAINING
-# =========================
-@st.cache_resource
-def train_ai():
-
-    df = yf.download("AAPL", period="5y", progress=False)
-    df = fix_yfinance(df)
-
-    df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
-    df["MACD"] = ta.trend.MACD(df["Close"]).macd()
-    df["EMA"] = ta.trend.EMAIndicator(df["Close"],20).ema_indicator()
-    df["ATR"] = ta.volatility.AverageTrueRange(
-        df["High"], df["Low"], df["Close"]
-    ).average_true_range()
-
-    df["Future"] = df["Close"].shift(-5)
-    df["Target"] = (df["Future"] > df["Close"]).astype(int)
-
-    df.dropna(inplace=True)
-
-    X = df[["RSI","MACD","EMA","ATR"]]
-    y = df["Target"]
-
-    model = RandomForestClassifier(n_estimators=200)
-    model.fit(X,y)
-
-    return model
-
-model = train_ai()
-
-# =========================
+# ---------------------------
 # SIDEBAR
-# =========================
-st.sidebar.title("⚙️ Settings")
+# ---------------------------
+st.sidebar.header("⚙️ Configurações")
 
-capital = st.sidebar.number_input("Capital ($)", value=500)
-risk = st.sidebar.slider("Risk %",1,10,2)/100
+file = st.sidebar.file_uploader("Carregar ficheiro CSV", type=["csv"])
 
-if st.sidebar.button("🚀 Scan Market"):
+use_demo = st.sidebar.checkbox("Usar dados de exemplo", value=True)
 
-    results = []
+# ---------------------------
+# DADOS
+# ---------------------------
+if file:
+    df = pd.read_csv(file)
 
-    with st.spinner("Scanning market..."):
-
-        for sym in SYMBOLS:
-
-            df = yf.download(sym, period="6mo", progress=False)
-            df = fix_yfinance(df)
-
-            # Indicators
-            df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
-            df["MACD"] = ta.trend.MACD(df["Close"]).macd()
-            df["EMA"] = ta.trend.EMAIndicator(df["Close"],20).ema_indicator()
-            df["ATR"] = ta.volatility.AverageTrueRange(
-                df["High"], df["Low"], df["Close"]
-            ).average_true_range()
-
-            df.dropna(inplace=True)
-
-            # AI probability
-            last = df.iloc[-1]
-            features = [[last["RSI"],last["MACD"],last["EMA"],last["ATR"]]]
-            prob = model.predict_proba(features)[0][1]
-
-            # Smart money
-            prev_low = df["Low"].rolling(20).min().iloc[-2]
-            prev_high = df["High"].rolling(20).max().iloc[-2]
-
-            stop_hunt = last["Low"] < prev_low and last["Close"] > prev_low
-            fake_break = last["High"] > prev_high and last["Close"] < prev_high
-            smart = stop_hunt or fake_break
-
-            # Explosion setup
-            atr_range = df["High"] - df["Low"]
-            compression = atr_range.iloc[-1] < atr_range.rolling(20).mean().iloc[-1]*0.6
-            volume_spike = last["Volume"] > df["Volume"].rolling(20).mean().iloc[-1]*1.5
-            explosion = compression and volume_spike
-
-            # Score
-            score = prob*60
-            if smart: score+=20
-            if explosion: score+=20
-
-            # Position size
-            stop = last["ATR"]*2
-            size = (capital*risk)/stop
-
-            results.append({
-                "Symbol": sym,
-                "AI %": round(prob*100,1),
-                "Smart Money": smart,
-                "Explosion Setup": explosion,
-                "Score": round(score),
-                "Price": round(last["Close"],2),
-                "Position Size": int(size)
-            })
-
-    df_results = pd.DataFrame(results).sort_values("Score", ascending=False)
-
-    st.subheader("🏆 Market Opportunities")
-    st.dataframe(df_results, use_container_width=True)
-
-    # Best trade chart
-    best = df_results.iloc[0]["Symbol"]
-    st.subheader(f"📈 Best Opportunity: {best}")
-
-    df = yf.download(best, period="6mo", progress=False)
-    df = fix_yfinance(df)
-
-    fig = px.line(df, y="Close", title=best)
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.success("Scan Complete!")
+elif use_demo:
+    np.random.seed(42)
+    df = pd.DataFrame({
+        "Vendas": np.random.randint(100, 1000, 100),
+        "Lucro": np.random.randint(50, 500, 100),
+        "Clientes": np.random.randint(10, 200, 100),
+        "Região": np.random.choice(["Norte", "Centro", "Sul"], 100)
+    })
 
 else:
-    st.info("Click 'Scan Market' to start analysis.")
+    st.warning("Carrega um ficheiro ou ativa dados demo.")
+    st.stop()
+
+# ---------------------------
+# MOSTRAR DADOS
+# ---------------------------
+st.subheader("📋 Dados")
+
+st.dataframe(df, use_container_width=True)
+
+# ---------------------------
+# ESTATÍSTICAS
+# ---------------------------
+st.subheader("📈 Estatísticas")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Linhas", df.shape[0])
+col2.metric("Colunas", df.shape[1])
+col3.metric("Valores Nulos", df.isna().sum().sum())
+
+st.write(df.describe())
+
+# ---------------------------
+# FILTROS
+# ---------------------------
+st.subheader("🎛️ Filtros")
+
+numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+cat_cols = df.select_dtypes(exclude=np.number).columns.tolist()
+
+filtered_df = df.copy()
+
+# Filtro categórico
+for col in cat_cols:
+    values = st.multiselect(f"Filtrar {col}", df[col].unique(), default=df[col].unique())
+    filtered_df = filtered_df[filtered_df[col].isin(values)]
+
+# ---------------------------
+# GRÁFICOS
+# ---------------------------
+st.subheader("📊 Visualização")
+
+if len(numeric_cols) >= 2:
+
+    x = st.selectbox("Eixo X", numeric_cols)
+    y = st.selectbox("Eixo Y", numeric_cols, index=1)
+
+    chart_type = st.radio(
+        "Tipo de gráfico",
+        ["Linha", "Dispersão", "Histograma"]
+    )
+
+    fig, ax = plt.subplots()
+
+    if chart_type == "Linha":
+        ax.plot(filtered_df[x], filtered_df[y])
+
+    elif chart_type == "Dispersão":
+        sns.scatterplot(data=filtered_df, x=x, y=y, ax=ax)
+
+    else:
+        ax.hist(filtered_df[x], bins=20)
+
+    st.pyplot(fig)
+
+else:
+    st.info("Precisas de pelo menos 2 colunas numéricas.")
+
+# ---------------------------
+# DOWNLOAD
+# ---------------------------
+st.subheader("⬇️ Exportar Dados")
+
+csv = filtered_df.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    "Descarregar CSV",
+    csv,
+    "dados_filtrados.csv",
+    "text/csv"
+)
+
+# ---------------------------
+# FOOTER
+# ---------------------------
+st.markdown("---")
+st.caption("Dashboard criado com Streamlit 🚀")

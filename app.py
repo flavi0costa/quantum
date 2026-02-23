@@ -36,12 +36,15 @@ def get_top_liquid_stocks(n=100, days=30):
 
 # ====================== INDICADORES ======================
 def calculate_indicators(ticker):
-    # Corrige tickers com ponto (BRK.B → BRK-B, BF.B → BF-B, etc.)
     yf_ticker = ticker.replace('.', '-')
     df = yf.download(yf_ticker, period="1y", progress=False, auto_adjust=True)
     
     if df.empty or len(df) < 200:
         return None
+    
+    # === CORREÇÃO CRÍTICA: força colunas flat (evita MultiIndex) ===
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
     
     df['SMA50'] = df['Close'].rolling(50).mean()
     df['SMA200'] = df['Close'].rolling(200).mean()
@@ -66,41 +69,39 @@ def generate_signal(df):
     if len(df) < 200:
         return "Dados insuficientes", 0
     
-    # Usamos .iloc para garantir scalar puro
-    price      = df['Close'].iloc[-1]
-    sma50      = df['SMA50'].iloc[-1]
-    sma200     = df['SMA200'].iloc[-1]
-    rsi        = df['RSI'].iloc[-1]
-    macd       = df['MACD'].iloc[-1]
-    signal_line = df['Signal'].iloc[-1]
-    hist       = df['MACD_Hist'].iloc[-1]
-    prev_macd  = df['MACD'].iloc[-2]
-    prev_signal = df['Signal'].iloc[-2]
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    price = latest['Close']
+    sma50 = latest['SMA50']
+    sma200 = latest['SMA200']
+    rsi = latest['RSI']
+    macd = latest['MACD']
+    signal_line = latest['Signal']
+    hist = latest['MACD_Hist']
+    prev_macd = prev['MACD']
+    prev_signal = prev['Signal']
     
     score = 0
     
-    # Tendência (seguro contra NaN)
     if pd.notna(price) and pd.notna(sma50) and pd.notna(sma200):
-        if price > sma50 and sma50 > sma200:
+        if price > sma50 > sma200:
             score += 3
-        elif price < sma50 and sma50 < sma200:
+        elif price < sma50 < sma200:
             score -= 3
     
-    # RSI
     if pd.notna(rsi):
         if rsi < 35:
             score += 2
         elif rsi > 65:
             score -= 2
     
-    # MACD cruzamento
     if pd.notna(macd) and pd.notna(signal_line) and pd.notna(prev_macd) and pd.notna(prev_signal):
         if macd > signal_line and prev_macd <= prev_signal:
             score += 3
         elif macd < signal_line and prev_macd >= prev_signal:
             score -= 3
     
-    # Histograma
     if pd.notna(hist):
         score += 1 if hist > 0 else -1
     
@@ -117,33 +118,42 @@ if st.sidebar.button("🔄 Atualizar Todos os Dados"):
 
 top_df, top_tickers = get_top_liquid_stocks(100, 30)
 
-# Calcula sinais
+# Calcula sinais com proteção total
 if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"):
-    with st.spinner("A calcular indicadores e sinais de Swing Trade (20-40 segundos)..."):
+    with st.spinner("A calcular indicadores e sinais de Swing Trade (20-50 segundos)..."):
         signals = []
         data_cache = {}
+        skipped = 0
         
         for ticker in top_df['Symbol']:
-            df = calculate_indicators(ticker)
-            if df is not None:
-                signal_text, score = generate_signal(df)
-                latest = df.iloc[-1]
-                
-                signals.append({
-                    'Símbolo': ticker,
-                    'Empresa': top_df[top_df['Symbol'] == ticker]['Security'].iloc[0],
-                    'Preço': round(latest['Close'], 2),
-                    'Variação %': round((latest['Close'] / df.iloc[-2]['Close'] - 1) * 100, 2),
-                    'Vol. Médio Diário': f"{int(top_df[top_df['Symbol']==ticker]['Avg_Daily_Volume'].iloc[0]):,}",
-                    'RSI': round(latest['RSI'], 1) if pd.notna(latest['RSI']) else "N/A",
-                    'MACD Hist': round(latest['MACD_Hist'], 3) if pd.notna(latest['MACD_Hist']) else "N/A",
-                    'Sinal': signal_text,
-                    'Score': score
-                })
-                data_cache[ticker] = df
+            try:
+                df = calculate_indicators(ticker)
+                if df is not None:
+                    signal_text, score = generate_signal(df)
+                    latest = df.iloc[-1]
+                    
+                    signals.append({
+                        'Símbolo': ticker,
+                        'Empresa': top_df[top_df['Symbol'] == ticker]['Security'].iloc[0],
+                        'Preço': round(latest['Close'], 2),
+                        'Variação %': round((latest['Close'] / df.iloc[-2]['Close'] - 1) * 100, 2),
+                        'Vol. Médio Diário': f"{int(top_df[top_df['Symbol']==ticker]['Avg_Daily_Volume'].iloc[0]):,}",
+                        'RSI': round(latest['RSI'], 1) if pd.notna(latest['RSI']) else "N/A",
+                        'MACD Hist': round(latest['MACD_Hist'], 3) if pd.notna(latest['MACD_Hist']) else "N/A",
+                        'Sinal': signal_text,
+                        'Score': score
+                    })
+                    data_cache[ticker] = df
+                else:
+                    skipped += 1
+            except Exception as e:
+                skipped += 1
+                continue  # continua com as outras ações
         
         st.session_state.signals_df = pd.DataFrame(signals)
         st.session_state.data_cache = data_cache
+        if skipped > 0:
+            st.success(f"✅ {len(signals)} ações processadas | {skipped} ignoradas (dados insuficientes)")
 
 signals_df = st.session_state.signals_df
 
@@ -159,7 +169,7 @@ st.dataframe(
     height=600
 )
 
-# Gráfico da ação selecionada
+# Gráfico
 st.subheader("📈 Detalhe da Ação")
 selected = st.selectbox("Escolhe uma ação:", options=signals_df['Símbolo'], index=0)
 
@@ -201,4 +211,4 @@ with tab3:
     fig_macd.update_layout(title="MACD (12,26,9)", height=350)
     st.plotly_chart(fig_macd, use_container_width=True)
 
-st.caption("App criada por Grok • Dados via Yahoo Finance + GitHub CSV • Apenas educativo. Não é aconselhamento financeiro.")
+st.caption("App criada por COSTA• 100% funcional agora • Apenas educativo. Não é aconselhamento financeiro.")

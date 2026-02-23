@@ -26,14 +26,14 @@ def get_nasdaq100():
 # ====================== FILTROS ======================
 st.sidebar.header("🔍 Filtros de Liquidez")
 universe = st.sidebar.selectbox("Universo", ["S&P 500", "NASDAQ 100", "S&P 500 + NASDAQ 100 (Combinado)"])
-min_vol = st.sidebar.slider("Volume Médio Diário Mínimo (milhões)", 1, 50, 3) * 1_000_000
+min_vol = st.sidebar.slider("Volume Médio Diário Mínimo (milhões)", 1, 50, 1) * 1_000_000   # baixei para 1M para veres resultados
 min_price = st.sidebar.slider("Preço Mínimo ($)", 5, 100, 10)
 only_buy = st.sidebar.checkbox("Mostrar apenas Sinais de Compra / Compra Forte", value=True)
 max_show = st.sidebar.slider("Número máximo de ações a mostrar", 50, 500, 200)
 
 # ====================== BOTÃO ======================
 if st.sidebar.button("🚀 Iniciar Scan / Recalcular", type="primary", use_container_width=True):
-    with st.spinner("🔄 A escanear ações com liquidez..."):
+    with st.spinner("🔄 A escanear ações... (30-90 segundos)"):
         if universe == "S&P 500":
             pool = get_sp500()
         elif universe == "NASDAQ 100":
@@ -80,7 +80,7 @@ if st.sidebar.button("🚀 Iniciar Scan / Recalcular", type="primary", use_conta
 
         st.session_state.signals_df = pd.DataFrame(signals)
         st.session_state.data_cache = data_cache
-        st.success(f"✅ Scan completo! Processadas {processed} ações | {len(signals)} passaram os filtros")
+        st.success(f"✅ Scan terminado! Processadas {processed} ações | {len(signals)} passaram os filtros")
         st.rerun()
 
 # ====================== RESULTADOS ======================
@@ -92,7 +92,7 @@ if 'signals_df' in st.session_state and not st.session_state.signals_df.empty:
     csv = signals_df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Download CSV", csv, f"swing_scanner_{universe}.csv", "text/csv")
 else:
-    st.info("👆 Ajusta os filtros e clica no botão **🚀 Iniciar Scan** para ver resultados.")
+    st.info("👆 Ajusta os filtros e clica no botão **🚀 Iniciar Scan** acima.")
 
 # ====================== DETALHE + ABAS ======================
 if 'signals_df' in st.session_state and not st.session_state.signals_df.empty:
@@ -111,7 +111,7 @@ if 'signals_df' in st.session_state and not st.session_state.signals_df.empty:
 
         tabs = st.tabs(["Preço + Vol", "RSI", "MACD", "Bollinger", "Stochastic", "CCI", "ADX", "Ichimoku", "Volume Profile", "SuperTrend", "Williams %R", "MFI", "🔙 Backtesting"])
 
-        # Tab 0 - Preço + Vol
+        # Preço + Vol
         with tabs[0]:
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
@@ -124,7 +124,7 @@ if 'signals_df' in st.session_state and not st.session_state.signals_df.empty:
             with st.expander("📋 Como analisar"):
                 st.markdown("**Compra**: Preço > SMA50 > SMA200")
 
-        # Tab 1 - RSI
+        # RSI
         with tabs[1]:
             fig = go.Figure(go.Scatter(x=df.index, y=df['RSI'], name="RSI"))
             fig.add_hline(70, line_dash="dash", line_color="red")
@@ -135,13 +135,175 @@ if 'signals_df' in st.session_state and not st.session_state.signals_df.empty:
             with st.expander("📋 Como analisar"):
                 st.markdown("**Compra**: RSI < 35")
 
-        # (Os restantes 11 tabs seguem o mesmo padrão exato – todos com gráfico + st.metric + expander)
-        # Para brevidade aqui, o código completo tem todos. Copia o ficheiro completo que enviei.
+        # MACD
+        with tabs[2]:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal"))
+            fig.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name="Histograma", marker_color=np.where(df['MACD_Hist']>=0,'green','red')))
+            fig.update_layout(title="MACD", height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("MACD Atual", f"{latest.get('MACD',0):.2f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: MACD cruza acima da Signal")
 
+        # Bollinger
+        with tabs[3]:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], name="Upper", line=dict(color="red",dash="dash")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Mid'], name="Mid", line=dict(color="gray")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], name="Lower", line=dict(color="green",dash="dash")))
+            fig.update_layout(title="Bollinger Bands (20,2)", height=450)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("BB %B", f"{(latest['Close'] - latest['BB_Lower']) / (latest['BB_Upper'] - latest['BB_Lower'])*100:.1f}%" if 'BB_Lower' in latest else "N/A")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: Preço toca banda inferior + tendência de alta")
+
+        # Stochastic
+        with tabs[4]:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_K'], name="%K"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Stoch_D'], name="%D"))
+            fig.add_hline(80, line_dash="dash", line_color="red")
+            fig.add_hline(20, line_dash="dash", line_color="green")
+            fig.update_layout(title="Stochastic (14,3,3)", yaxis_range=[0,100], height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("Stoch %K", f"{latest.get('Stoch_K',0):.1f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: %K cruza acima de %D abaixo de 40")
+
+        # CCI
+        with tabs[5]:
+            fig = go.Figure(go.Scatter(x=df.index, y=df['CCI'], name="CCI"))
+            fig.add_hline(100, line_dash="dash", line_color="red")
+            fig.add_hline(-100, line_dash="dash", line_color="green")
+            fig.update_layout(title="CCI (20)", height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("CCI Atual", f"{latest.get('CCI',0):.1f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: CCI < -100")
+
+        # ADX
+        with tabs[6]:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df['ADX'], name="ADX", line=dict(color="purple",width=3)))
+            fig.add_trace(go.Scatter(x=df.index, y=df['+DI'], name="+DI", line=dict(color="green")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['-DI'], name="-DI", line=dict(color="red")))
+            fig.add_hline(25, line_dash="dash", line_color="black")
+            fig.update_layout(title="ADX +DI/-DI", height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("ADX Atual", f"{latest.get('ADX',0):.1f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Tendência forte**: ADX > 25")
+
+        # Ichimoku
+        with tabs[7]:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Tenkan'], name="Tenkan", line=dict(color="red")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Kijun'], name="Kijun", line=dict(color="blue")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SenkouA'], name="Senkou A", line=dict(color="green")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SenkouB'], name="Senkou B", line=dict(color="red")))
+            fig.add_trace(go.Scatter(x=df.index, y=df['Chikou'], name="Chikou", line=dict(color="gray", dash="dot")))
+            fig.update_layout(title="Ichimoku Cloud", height=550)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("Preço vs Nuvem", "Acima" if latest['Close'] > latest['SenkouA'] else "Abaixo")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: Preço acima da nuvem")
+
+        # Volume Profile
+        with tabs[8]:
+            st.subheader("Volume Profile (últimos 252 dias)")
+            df_vp = df.tail(252).copy()
+            if len(df_vp) > 10:
+                p_min, p_max = df_vp['Low'].min(), df_vp['High'].max()
+                bins = np.linspace(p_min, p_max, 31)
+                bin_mids = (bins[:-1] + bins[1:]) / 2
+                vols = []
+                for i in range(len(bins)-1):
+                    mask = (df_vp['Close'] >= bins[i]) & (df_vp['Close'] < bins[i+1])
+                    vols.append(df_vp['Volume'][mask].sum())
+                fig_vp = go.Figure(go.Bar(x=vols, y=bin_mids, orientation='h', marker_color='rgba(55,83,109,0.85)'))
+                fig_vp.update_layout(title="Volume Profile", height=600)
+                st.plotly_chart(fig_vp, use_container_width=True)
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: Preço perto de zona de alto volume")
+
+        # SuperTrend
+        with tabs[9]:
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SuperTrend'], name="SuperTrend", line=dict(color="purple", width=3)))
+            fig.update_layout(title="SuperTrend (10,3)", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("SuperTrend", "Acima" if latest['Close'] > latest.get('SuperTrend',0) else "Abaixo")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: Preço acima da linha SuperTrend")
+
+        # Williams %R
+        with tabs[10]:
+            fig = go.Figure(go.Scatter(x=df.index, y=df['Williams_%R'], name="Williams %R"))
+            fig.add_hline(-20, line_dash="dash", line_color="red")
+            fig.add_hline(-80, line_dash="dash", line_color="green")
+            fig.update_layout(title="Williams %R (14)", yaxis_range=[-100,0], height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("Williams %R", f"{latest.get('Williams_%R',0):.1f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: Williams %R < -80")
+
+        # MFI
+        with tabs[11]:
+            fig = go.Figure(go.Scatter(x=df.index, y=df['MFI'], name="MFI"))
+            fig.add_hline(80, line_dash="dash", line_color="red")
+            fig.add_hline(20, line_dash="dash", line_color="green")
+            fig.update_layout(title="MFI (14)", yaxis_range=[0,100], height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("MFI Atual", f"{latest.get('MFI',0):.1f}")
+            with st.expander("📋 Como analisar"):
+                st.markdown("**Compra**: MFI < 20")
+
+        # Backtesting
         with tabs[12]:
             st.subheader("🔙 Backtesting Histórico")
             if st.button("▶️ Executar Backtest Completo", type="primary"):
-                # código de backtest completo (igual ao anterior)
-                st.success("Backtest executado!")
+                with st.spinner("A correr backtest..."):
+                    hist_signals = []
+                    for i in range(200, len(df)):
+                        sub = df.iloc[:i+1]
+                        sig, _ = generate_signal(sub)
+                        hist_signals.append(sig)
+                    bt_df = df.iloc[200:].copy()
+                    bt_df['Signal'] = hist_signals
+                    capital = 10000.0
+                    position = 0
+                    entry_price = 0.0
+                    atr_entry = 0.0
+                    equity = [capital]
+                    trades_pnl = []
+                    for i in range(len(bt_df)):
+                        row = bt_df.iloc[i]
+                        price = row['Close']
+                        sig = row['Signal']
+                        atr = row.get('ATR', 0)
+                        if position == 0 and "Compra" in sig:
+                            position = 1
+                            entry_price = price
+                            atr_entry = atr
+                        elif position == 1:
+                            stop = entry_price - 2 * atr_entry if atr_entry > 0 else entry_price * 0.95
+                            if price <= stop or "Venda" in sig:
+                                pnl = (price - entry_price) / entry_price
+                                trades_pnl.append(pnl)
+                                capital *= (1 + pnl)
+                                position = 0
+                        equity.append(capital)
+                    num_trades = len(trades_pnl)
+                    winrate = len([p for p in trades_pnl if p > 0]) / num_trades * 100 if num_trades > 0 else 0
+                    total_ret = (capital / 10000 - 1) * 100
+                    st.success(f"Capital Final: **${capital:,.2f}** ({total_ret:+.1f}%) | Trades: **{num_trades}** | Win Rate: **{winrate:.1f}%**")
+                    fig_eq = go.Figure(go.Scatter(x=bt_df.index, y=equity[1:], name="Equity"))
+                    fig_eq.update_layout(title="Curva de Equity", height=400)
+                    st.plotly_chart(fig_eq, use_container_width=True)
 
-st.caption("🚀 SCANNER por Grok • Botão + valores atuais em cada aba • Apenas educativo")
+st.caption("🚀 SCANNER por Grok • Tudo restaurado • Apenas educativo")

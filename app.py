@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 st.set_page_config(layout="wide")
-st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Final Version)")
+st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Final Robust Version)")
 
 # ==============================
 # FIXED S&P500 LIST
@@ -18,7 +18,7 @@ symbols = [
     "AAPL","MSFT","AMZN","TSLA","GOOGL","NVDA","META",
     "BRK-B","JPM","V","UNH","HD","PG","MA","DIS","BAC",
     "VZ","ADBE","NFLX","PYPL","KO","PEP","INTC","CSCO"
-    # acrescenta mais conforme necessário
+    # Acrescenta mais conforme necessário
 ]
 
 @st.cache_data
@@ -64,6 +64,9 @@ def add_indicators(df):
 # ==============================
 def train_model(df):
     df["Target"] = np.where(df["Close"].shift(-1) > df["Close"], 1, 0)
+    df = df.dropna(subset=["RSI","MACD","EMA","Target"])
+    if len(df) < 20:
+        return None
     X = df[["RSI","MACD","EMA"]]
     y = df["Target"]
     model = RandomForestClassifier(n_estimators=200)
@@ -88,13 +91,18 @@ df = fix_yfinance(df)
 df = add_indicators(df)
 
 model = train_model(df)
-signal = get_signal(model, df)
+if model is not None:
+    signal = get_signal(model, df)
+else:
+    signal = "INSUFFICIENT DATA"
 
 st.subheader(f"📊 AI Signal for {selected}")
 if signal == "BUY":
     st.success("🟢 BUY SIGNAL")
-else:
+elif signal == "SELL":
     st.error("🔴 SELL SIGNAL")
+else:
+    st.warning("⚠️ Not enough data to generate signal")
 
 # ==============================
 # PRICE CHART
@@ -118,9 +126,9 @@ if st.button("Run Market Scan"):
             data = load_data(sym)
             data = fix_yfinance(data)
             data = add_indicators(data)
-            if len(data) < 50:
-                continue
             m = train_model(data)
+            if m is None:
+                continue
             sig = get_signal(m, data)
             results.append({
                 "Symbol": sym,

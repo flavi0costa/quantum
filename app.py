@@ -1,142 +1,209 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import ta
-import plotly.express as px
-from sklearn.ensemble import RandomForestClassifier
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-st.set_page_config(layout="wide")
-st.title("🧠 SUPER QUANT TERMINAL")
+st.set_page_config(page_title="Swing Trade S&P500", layout="wide")
+st.title("🚀 Sinais de Swing Trade - Top 100 Ações Mais Líquidas do S&P 500")
 
-SYMBOLS = ["AAPL","TSLA","NVDA","MSFT","AMD","META","AMZN"]
+# ====================== CACHE ======================
+@st.cache_data(ttl=3600)  # atualiza a cada hora
+def get_sp500():
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    df = pd.read_html(url)[0]
+    return df[['Symbol', 'Security']]
 
-# =========================
-# FIX UNIVERSAL YFINANCE
-# =========================
-def fix_yfinance(df):
-    df = df.copy()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.droplevel(1)
+@st.cache_data(ttl=3600)
+def get_top_liquid_stocks(n=100, days=30):
+    sp500 = get_sp500()
+    tickers = sp500['Symbol'].tolist()
+    
+    with st.spinner("A obter volume das 503 ações do S&P 500..."):
+        vol_data = yf.download(tickers, period=f"{days}d", progress=False, threads=True)['Volume']
+        avg_vol = vol_data.mean().sort_values(ascending=False)
+        
+        top_tickers = avg_vol.head(n).index.tolist()
+        name_dict = dict(zip(sp500['Symbol'], sp500['Security']))
+        
+        top_df = pd.DataFrame({
+            'Symbol': top_tickers,
+            'Security': [name_dict.get(t, t) for t in top_tickers],
+            'Avg_Daily_Volume': avg_vol.head(n).astype(int)
+        })
+    return top_df, top_tickers
 
-    for col in ["Close","High","Low","Volume"]:
-        df[col] = pd.Series(df[col].values, index=df.index)
-
+# ====================== INDICADORES ======================
+def calculate_indicators(ticker):
+    df = yf.download(ticker, period="1y", progress=False, auto_adjust=True)
+    if df.empty or len(df) < 200:
+        return None
+    
+    df['SMA50'] = df['Close'].rolling(50).mean()
+    df['SMA200'] = df['Close'].rolling(200).mean()
+    
+    # MACD
+    df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+    df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['Signal']
+    
+    # RSI
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
     return df
 
-# =========================
-# AI TRAINING
-# =========================
-@st.cache_resource
-def train_ai():
+def generate_signal(df):
+    if len(df) < 200:
+        return "Dados insuficientes", 0
+    
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    price = latest['Close']
+    sma50 = latest['SMA50']
+    sma200 = latest['SMA200']
+    rsi = latest['RSI']
+    macd = latest['MACD']
+    signal_line = latest['Signal']
+    hist = latest['MACD_Hist']
+    
+    score = 0
+    
+    # Tendência forte
+    if price > sma50 > sma200:
+        score += 3
+    elif price < sma50 < sma200:
+        score -= 3
+    
+    # RSI
+    if rsi < 35:
+        score += 2
+    elif rsi > 65:
+        score -= 2
+    
+    # MACD
+    if macd > signal_line and prev['MACD'] <= prev['Signal']:
+        score += 3  # cruzamento bullish
+    elif macd < signal_line and prev['MACD'] >= prev['Signal']:
+        score -= 3
+    
+    if hist > 0:
+        score += 1
+    else:
+        score -= 1
+    
+    if score >= 6:
+        return "🟢 Compra Forte", score
+    elif score >= 3:
+        return "🟢 Compra", score
+    elif score <= -6:
+        return "🔴 Venda Forte", score
+    elif score <= -3:
+        return "🔴 Venda", score
+    else:
+        return "⚪ Neutro", score
 
-    df = yf.download("AAPL", period="5y", progress=False)
-    df = fix_yfinance(df)
+# ====================== INTERFACE ======================
+if st.sidebar.button("🔄 Atualizar Todos os Dados"):
+    st.cache_data.clear()
+    st.rerun()
 
-    df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
-    df["MACD"] = ta.trend.MACD(df["Close"]).macd()
-    df["EMA"] = ta.trend.EMAIndicator(df["Close"],20).ema_indicator()
-    df["ATR"] = ta.volatility.AverageTrueRange(
-        df["High"], df["Low"], df["Close"]
-    ).average_true_range()
+top_df, top_tickers = get_top_liquid_stocks(100, 30)
 
-    df["Future"] = df["Close"].shift(-5)
-    df["Target"] = (df["Future"] > df["Close"]).astype(int)
+# Calcula sinais
+if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"):
+    with st.spinner("A calcular indicadores e sinais de Swing Trade (pode demorar 20-40 segundos)..."):
+        signals = []
+        data_cache = {}
+        
+        for ticker in top_df['Symbol']:
+            df = calculate_indicators(ticker)
+            if df is not None:
+                signal_text, score = generate_signal(df)
+                latest = df.iloc[-1]
+                
+                signals.append({
+                    'Símbolo': ticker,
+                    'Empresa': top_df[top_df['Symbol'] == ticker]['Security'].iloc[0],
+                    'Preço': round(latest['Close'], 2),
+                    'Variação %': round((latest['Close'] / df.iloc[-2]['Close'] - 1) * 100, 2),
+                    'Vol. Médio Diário': f"{int(top_df[top_df['Symbol']==ticker]['Avg_Daily_Volume'].iloc[0]):,}",
+                    'RSI': round(latest['RSI'], 1),
+                    'MACD Hist': round(latest['MACD_Hist'], 3),
+                    'Sinal': signal_text,
+                    'Score': score
+                })
+                data_cache[ticker] = df
+        
+        st.session_state.signals_df = pd.DataFrame(signals)
+        st.session_state.data_cache = data_cache
 
-    df.dropna(inplace=True)
+signals_df = st.session_state.signals_df
 
-    X = df[["RSI","MACD","EMA","ATR"]]
-    y = df["Target"]
+# Tabela principal
+st.subheader("📊 Top 100 Ações + Sinais de Swing Trade")
+st.dataframe(
+    signals_df.sort_values('Score', ascending=False),
+    column_config={
+        "Sinal": st.column_config.TextColumn("Sinal", width="medium"),
+        "Score": st.column_config.NumberColumn("Score", format="%d"),
+        "Variação %": st.column_config.NumberColumn("Variação %", format="%.2f%%"),
+    },
+    use_container_width=True,
+    height=600
+)
 
-    model = RandomForestClassifier(n_estimators=200)
-    model.fit(X,y)
+# Gráfico da ação selecionada
+st.subheader("📈 Detalhe da Ação")
+selected = st.selectbox("Escolhe uma ação:", options=signals_df['Símbolo'], index=0)
 
-    return model
+df = st.session_state.data_cache[selected]
+latest = df.iloc[-1]
+signal_text, _ = generate_signal(df)
 
-model = train_ai()
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Preço Atual", f"${latest['Close']:.2f}", f"{(latest['Close']/df.iloc[-2]['Close']-1)*100:+.2f}%")
+col2.metric("RSI (14)", f"{latest['RSI']:.1f}")
+col3.metric("Sinal Swing Trade", signal_text)
+col4.metric("Volume Médio 30d", f"{int(top_df[top_df['Symbol']==selected]['Avg_Daily_Volume'].iloc[0]):,}")
 
-# =========================
-# SIDEBAR
-# =========================
-st.sidebar.title("⚙️ Settings")
+# === GRÁFICOS ===
+tab1, tab2, tab3 = st.tabs(["Preço + Volume", "RSI", "MACD"])
 
-capital = st.sidebar.number_input("Capital ($)", value=500)
-risk = st.sidebar.slider("Risk %",1,10,2)/100
+with tab1:
+    fig_pv = make_subplots(specs=[[{"secondary_y": True}]])
+    fig_pv.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"), secondary_y=False)
+    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA50'], name="SMA 50", line=dict(color="orange", width=2)), secondary_y=False)
+    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA200'], name="SMA 200", line=dict(color="blue", width=2)), secondary_y=False)
+    fig_pv.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(100,149,237,0.6)"), secondary_y=True)
+    
+    fig_pv.update_layout(title=f"{selected} - Gráfico Diário", xaxis_rangeslider_visible=False, height=650)
+    fig_pv.update_yaxes(title="Preço ($)", secondary_y=False)
+    fig_pv.update_yaxes(title="Volume", secondary_y=True)
+    st.plotly_chart(fig_pv, use_container_width=True)
 
-if st.sidebar.button("🚀 Scan Market"):
+with tab2:
+    fig_rsi = go.Figure()
+    fig_rsi.add_trace(go.Scatter(x=df.index, y=df['RSI'], name="RSI 14", line=dict(color="#9B59B6")))
+    fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Sobrecomprado")
+    fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Sobrevendido")
+    fig_rsi.update_layout(title="RSI (14 períodos)", yaxis_range=[0, 100], height=350)
+    st.plotly_chart(fig_rsi, use_container_width=True)
 
-    results = []
+with tab3:
+    fig_macd = go.Figure()
+    fig_macd.add_trace(go.Scatter(x=df.index, y=df['MACD'], name="MACD", line=dict(color="blue")))
+    fig_macd.add_trace(go.Scatter(x=df.index, y=df['Signal'], name="Signal Line", line=dict(color="red")))
+    fig_macd.add_trace(go.Bar(x=df.index, y=df['MACD_Hist'], name="Histograma", 
+                             marker_color=np.where(df['MACD_Hist'] >= 0, 'green', 'red')))
+    fig_macd.update_layout(title="MACD (12,26,9)", height=350)
+    st.plotly_chart(fig_macd, use_container_width=True)
 
-    with st.spinner("Scanning market..."):
-
-        for sym in SYMBOLS:
-
-            df = yf.download(sym, period="6mo", progress=False)
-            df = fix_yfinance(df)
-
-            # Indicators
-            df["RSI"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
-            df["MACD"] = ta.trend.MACD(df["Close"]).macd()
-            df["EMA"] = ta.trend.EMAIndicator(df["Close"],20).ema_indicator()
-            df["ATR"] = ta.volatility.AverageTrueRange(
-                df["High"], df["Low"], df["Close"]
-            ).average_true_range()
-
-            df.dropna(inplace=True)
-
-            # AI probability
-            last = df.iloc[-1]
-            features = [[last["RSI"],last["MACD"],last["EMA"],last["ATR"]]]
-            prob = model.predict_proba(features)[0][1]
-
-            # Smart money
-            prev_low = df["Low"].rolling(20).min().iloc[-2]
-            prev_high = df["High"].rolling(20).max().iloc[-2]
-
-            stop_hunt = last["Low"] < prev_low and last["Close"] > prev_low
-            fake_break = last["High"] > prev_high and last["Close"] < prev_high
-            smart = stop_hunt or fake_break
-
-            # Explosion setup
-            atr_range = df["High"] - df["Low"]
-            compression = atr_range.iloc[-1] < atr_range.rolling(20).mean().iloc[-1]*0.6
-            volume_spike = last["Volume"] > df["Volume"].rolling(20).mean().iloc[-1]*1.5
-            explosion = compression and volume_spike
-
-            # Score
-            score = prob*60
-            if smart: score+=20
-            if explosion: score+=20
-
-            # Position size
-            stop = last["ATR"]*2
-            size = (capital*risk)/stop
-
-            results.append({
-                "Symbol": sym,
-                "AI %": round(prob*100,1),
-                "Smart Money": smart,
-                "Explosion Setup": explosion,
-                "Score": round(score),
-                "Price": round(last["Close"],2),
-                "Position Size": int(size)
-            })
-
-    df_results = pd.DataFrame(results).sort_values("Score", ascending=False)
-
-    st.subheader("🏆 Market Opportunities")
-    st.dataframe(df_results, use_container_width=True)
-
-    # Best trade chart
-    best = df_results.iloc[0]["Symbol"]
-    st.subheader(f"📈 Best Opportunity: {best}")
-
-    df = yf.download(best, period="6mo", progress=False)
-    df = fix_yfinance(df)
-
-    fig = px.line(df, y="Close", title=best)
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.success("Scan Complete!")
-
-else:
-    st.info("Click 'Scan Market' to start analysis.")
+st.caption("App criada por COSTA • Dados em tempo real via Yahoo Finance • Sinais apenas para fins educativos. Não é aconselhamento financeiro.")

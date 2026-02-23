@@ -9,18 +9,21 @@ st.set_page_config(page_title="Swing Trade S&P500", layout="wide")
 st.title("🚀 Sinais de Swing Trade - Top 100 Ações Mais Líquidas do S&P 500")
 
 # ====================== CACHE ======================
-@st.cache_data(ttl=3600)  # atualiza a cada hora
+@st.cache_data(ttl=86400)  # atualiza 1x por dia
 def get_sp500():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    df = pd.read_html(url)[0]
-    return df[['Symbol', 'Security']]
+    # Fonte GitHub CSV (nunca dá 403, super confiável)
+    url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+    df = pd.read_csv(url)
+    # Renomeia para manter compatibilidade com o resto do código
+    df = df[['Symbol', 'Name']].rename(columns={'Name': 'Security'})
+    return df
 
 @st.cache_data(ttl=3600)
 def get_top_liquid_stocks(n=100, days=30):
     sp500 = get_sp500()
     tickers = sp500['Symbol'].tolist()
     
-    with st.spinner("A obter volume das 503 ações do S&P 500..."):
+    with st.spinner("A obter volume médio das \~500 ações do S&P 500..."):
         vol_data = yf.download(tickers, period=f"{days}d", progress=False, threads=True)['Volume']
         avg_vol = vol_data.mean().sort_values(ascending=False)
         
@@ -76,39 +79,28 @@ def generate_signal(df):
     
     score = 0
     
-    # Tendência forte
     if price > sma50 > sma200:
         score += 3
     elif price < sma50 < sma200:
         score -= 3
     
-    # RSI
     if rsi < 35:
         score += 2
     elif rsi > 65:
         score -= 2
     
-    # MACD
     if macd > signal_line and prev['MACD'] <= prev['Signal']:
-        score += 3  # cruzamento bullish
+        score += 3
     elif macd < signal_line and prev['MACD'] >= prev['Signal']:
         score -= 3
     
-    if hist > 0:
-        score += 1
-    else:
-        score -= 1
+    score += 1 if hist > 0 else -1
     
-    if score >= 6:
-        return "🟢 Compra Forte", score
-    elif score >= 3:
-        return "🟢 Compra", score
-    elif score <= -6:
-        return "🔴 Venda Forte", score
-    elif score <= -3:
-        return "🔴 Venda", score
-    else:
-        return "⚪ Neutro", score
+    if score >= 6:   return "🟢 Compra Forte", score
+    if score >= 3:   return "🟢 Compra", score
+    if score <= -6:  return "🔴 Venda Forte", score
+    if score <= -3:  return "🔴 Venda", score
+    return "⚪ Neutro", score
 
 # ====================== INTERFACE ======================
 if st.sidebar.button("🔄 Atualizar Todos os Dados"):
@@ -119,7 +111,7 @@ top_df, top_tickers = get_top_liquid_stocks(100, 30)
 
 # Calcula sinais
 if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"):
-    with st.spinner("A calcular indicadores e sinais de Swing Trade (pode demorar 20-40 segundos)..."):
+    with st.spinner("A calcular indicadores e sinais de Swing Trade (20-40 segundos)..."):
         signals = []
         data_cache = {}
         
@@ -147,7 +139,6 @@ if 'signals_df' not in st.session_state or st.sidebar.button("Recalcular Sinais"
 
 signals_df = st.session_state.signals_df
 
-# Tabela principal
 st.subheader("📊 Top 100 Ações + Sinais de Swing Trade")
 st.dataframe(
     signals_df.sort_values('Score', ascending=False),
@@ -174,19 +165,15 @@ col2.metric("RSI (14)", f"{latest['RSI']:.1f}")
 col3.metric("Sinal Swing Trade", signal_text)
 col4.metric("Volume Médio 30d", f"{int(top_df[top_df['Symbol']==selected]['Avg_Daily_Volume'].iloc[0]):,}")
 
-# === GRÁFICOS ===
 tab1, tab2, tab3 = st.tabs(["Preço + Volume", "RSI", "MACD"])
 
 with tab1:
     fig_pv = make_subplots(specs=[[{"secondary_y": True}]])
-    fig_pv.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"), secondary_y=False)
-    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA50'], name="SMA 50", line=dict(color="orange", width=2)), secondary_y=False)
-    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA200'], name="SMA 200", line=dict(color="blue", width=2)), secondary_y=False)
+    fig_pv.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="OHLC"))
+    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA50'], name="SMA 50", line=dict(color="orange", width=2)))
+    fig_pv.add_trace(go.Scatter(x=df.index, y=df['SMA200'], name="SMA 200", line=dict(color="blue", width=2)))
     fig_pv.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Volume", marker_color="rgba(100,149,237,0.6)"), secondary_y=True)
-    
     fig_pv.update_layout(title=f"{selected} - Gráfico Diário", xaxis_rangeslider_visible=False, height=650)
-    fig_pv.update_yaxes(title="Preço ($)", secondary_y=False)
-    fig_pv.update_yaxes(title="Volume", secondary_y=True)
     st.plotly_chart(fig_pv, use_container_width=True)
 
 with tab2:
@@ -206,4 +193,4 @@ with tab3:
     fig_macd.update_layout(title="MACD (12,26,9)", height=350)
     st.plotly_chart(fig_macd, use_container_width=True)
 
-st.caption("App criada por COSTA • Dados em tempo real via Yahoo Finance • Sinais apenas para fins educativos. Não é aconselhamento financeiro.")
+st.caption("App criada por Grok • Dados via Yahoo Finance + GitHub CSV • Apenas educativo. Não é aconselhamento financeiro.")

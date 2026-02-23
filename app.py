@@ -6,10 +6,9 @@ import ta
 from sklearn.ensemble import RandomForestClassifier
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 st.set_page_config(layout="wide")
-st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Final Robust Version)")
+st.title("🚀 SUPER QUANT BOT — S&P500 AI SCANNER (Robust Final Version)")
 
 # ==============================
 # FIXED S&P500 LIST (corrigida)
@@ -32,9 +31,14 @@ symbols = load_sp500()
 # ==============================
 @st.cache_data
 def load_data(symbol):
-    df = yf.download(symbol, period="1y", interval="1d")
-    df = df.dropna()
-    return df
+    try:
+        df = yf.download(symbol, period="1y", interval="1d")
+        if df.empty:
+            return None
+        df = df.dropna()
+        return df
+    except:
+        return None
 
 # ==============================
 # FIX MULTIINDEX / CLEAN DATA
@@ -87,30 +91,33 @@ def get_signal(model, df):
 selected = st.selectbox("Select Stock", symbols)
 
 df = load_data(selected)
-df = fix_yfinance(df)
-df = add_indicators(df)
-
-model = train_model(df)
-if model is not None:
-    signal = get_signal(model, df)
+if df is None:
+    st.warning(f"⚠️ Nenhum dado disponível para {selected}")
 else:
-    signal = "INSUFFICIENT DATA"
+    df = fix_yfinance(df)
+    df = add_indicators(df)
 
-st.subheader(f"📊 AI Signal for {selected}")
-if signal == "BUY":
-    st.success("🟢 BUY SIGNAL")
-elif signal == "SELL":
-    st.error("🔴 SELL SIGNAL")
-else:
-    st.warning("⚠️ Not enough data to generate signal")
+    model = train_model(df)
+    if model is not None:
+        signal = get_signal(model, df)
+    else:
+        signal = "INSUFFICIENT DATA"
 
-# ==============================
-# PRICE CHART
-# ==============================
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price"))
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA"], name="EMA"))
-st.plotly_chart(fig, use_container_width=True)
+    st.subheader(f"📊 AI Signal for {selected}")
+    if signal == "BUY":
+        st.success("🟢 BUY SIGNAL")
+    elif signal == "SELL":
+        st.error("🔴 SELL SIGNAL")
+    else:
+        st.warning("⚠️ Not enough data to generate signal")
+
+    # ==============================
+    # PRICE CHART
+    # ==============================
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Price"))
+    fig.add_trace(go.Scatter(x=df.index, y=df["EMA"], name="EMA"))
+    st.plotly_chart(fig, use_container_width=True)
 
 # ==============================
 # FULL MARKET SCANNER
@@ -120,49 +127,53 @@ st.subheader("🔥 FULL S&P500 AI SCANNER")
 if st.button("Run Market Scan"):
     results = []
     progress = st.progress(0)
+    valid_symbols = 0
 
     for i, sym in enumerate(symbols):
+        data = load_data(sym)
+        if data is None or data.empty:
+            progress.progress((i+1)/len(symbols))
+            continue  # pula se sem dados
         try:
-            data = load_data(sym)
             data = fix_yfinance(data)
             data = add_indicators(data)
-            m = train_model(data)
-            if m is None:
+            model = train_model(data)
+            if model is None:
+                progress.progress((i+1)/len(symbols))
                 continue
-            sig = get_signal(m, data)
+            sig = get_signal(model, data)
             results.append({
                 "Symbol": sym,
                 "Signal": sig,
                 "Price": round(data["Close"].iloc[-1],2),
                 "RSI": round(data["RSI"].iloc[-1],2)
             })
+            valid_symbols += 1
         except:
             pass
         progress.progress((i+1)/len(symbols))
 
-    df_results = pd.DataFrame(results)
-
-    if len(df_results) > 0:
+    if valid_symbols == 0:
+        st.warning("⚠️ Nenhum ticker válido encontrado. Verifique os símbolos ou o período de dados.")
+    else:
+        df_results = pd.DataFrame(results)
         st.dataframe(df_results.sort_values("RSI", ascending=False))
-    else:
-        st.warning("⚠️ Nenhum dado válido para exibir no scanner")
 
-    # ==============================
-    # BACKTESTING VISUAL (SIMPLE)
-    # ==============================
-    st.subheader("📈 Backtesting Visual")
-    top_buy = df_results[df_results["Signal"]=="BUY"].sort_values("RSI", ascending=False).head(5) if len(df_results) > 0 else pd.DataFrame()
-    
-    if len(top_buy) > 0:
-        fig2, ax2 = plt.subplots(figsize=(10,5))
-        for sym in top_buy["Symbol"]:
-            data = load_data(sym)
-            data = fix_yfinance(data)
-            data = add_indicators(data)
-            ax2.plot(data.index, data["Close"], label=sym)
-        ax2.set_title("Top 5 BUY Signals - Price History")
-        ax2.set_ylabel("Price ($)")
-        ax2.legend()
-        st.pyplot(fig2)
-    else:
-        st.info("Nenhuma ação com sinal BUY disponível para backtesting")
+        # ==============================
+        # BACKTESTING VISUAL (SIMPLE)
+        # ==============================
+        st.subheader("📈 Backtesting Visual")
+        top_buy = df_results[df_results["Signal"]=="BUY"].sort_values("RSI", ascending=False).head(5)
+        if len(top_buy) > 0:
+            fig2, ax2 = plt.subplots(figsize=(10,5))
+            for sym in top_buy["Symbol"]:
+                data = load_data(sym)
+                data = fix_yfinance(data)
+                data = add_indicators(data)
+                ax2.plot(data.index, data["Close"], label=sym)
+            ax2.set_title("Top 5 BUY Signals - Price History")
+            ax2.set_ylabel("Price ($)")
+            ax2.legend()
+            st.pyplot(fig2)
+        else:
+            st.info("Nenhuma ação com sinal BUY disponível para backtesting")
